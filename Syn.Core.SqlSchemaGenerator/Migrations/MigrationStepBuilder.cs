@@ -13,7 +13,7 @@ public class MigrationStepBuilder : IMigrationStepBuilder
     /// <summary>
     /// Generates migration steps between two schema snapshots.
     /// </summary>
-    public List<MigrationStep> BuildSteps(List<EntityDefinition> oldSchema, List<EntityDefinition> newSchema)
+    public List<MigrationStep> BuildSteps(IEnumerable<EntityDefinition> oldSchema, IEnumerable<EntityDefinition> newSchema)
     {
         var steps = new List<MigrationStep>();
 

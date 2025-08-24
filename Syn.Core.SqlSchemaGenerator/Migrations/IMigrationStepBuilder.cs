@@ -5,7 +5,7 @@ namespace Syn.Core.SqlSchemaGenerator.Migrations
 {
     public interface IMigrationStepBuilder
     {
-        List<MigrationStep> BuildSteps(List<EntityDefinition> oldSchema, List<EntityDefinition> newSchema);
+        List<MigrationStep> BuildSteps(IEnumerable<EntityDefinition> oldSchema, IEnumerable<EntityDefinition> newSchema);
     }
 
 }

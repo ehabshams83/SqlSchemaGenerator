@@ -4,7 +4,7 @@ namespace Syn.Core.SqlSchemaGenerator.Migrations
 {
     public interface ISchemaSnapshotProvider
     {
-        List<EntityDefinition> LoadSnapshot();
+        IEnumerable<EntityDefinition> LoadSnapshot();
     }
 
 }

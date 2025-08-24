@@ -1,7 +1,7 @@
 ﻿using Syn.Core.SqlSchemaGenerator.Models;
 using Syn.Core.SqlSchemaGenerator.Migrations;
 
-namespace Syn.Core.SqlSchemaGenerator.Snapshots
+namespace Syn.Core.SqlSchemaGenerator.Storage
 {
     /// <summary>
     /// Provides a static in-memory snapshot of entity definitions for migration comparison.
@@ -23,7 +23,7 @@ namespace Syn.Core.SqlSchemaGenerator.Snapshots
         /// Loads the snapshot from memory.
         /// </summary>
         /// <returns>List of entity definitions.</returns>
-        public List<EntityDefinition> LoadSnapshot()
+        public IEnumerable<EntityDefinition> LoadSnapshot()
         {
             return _snapshot;
         }
