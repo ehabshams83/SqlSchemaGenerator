@@ -1,44 +1,68 @@
-﻿namespace Syn.Core.SqlSchemaGenerator.Models;
+﻿using Syn.Core.SqlSchemaGenerator.Models;
 
 /// <summary>
-/// Represents the schema definition of a database entity (table or view).
-/// Contains metadata for table name, schema, columns, constraints, and indexes.
+/// Represents a logical entity definition used for schema generation and comparison.
+/// Includes metadata such as name, schema, version, columns, constraints, and tags.
 /// </summary>
 public class EntityModel
 {
-    /// <summary>The name of the entity or table.</summary>
-    public string Name { get; set; } = null!;
+    /// <summary>
+    /// The name of the entity (e.g., table or view name).
+    /// </summary>
+    public string Name { get; set; }
 
-    /// <summary>The database schema name (e.g., dbo, public).</summary>
-    public string Schema { get; set; } = "dbo";
+    /// <summary>
+    /// The schema name under which the entity resides.
+    /// </summary>
+    public string Schema { get; set; }
 
-    /// <summary>The version of the entity schema, used for migration tracking.</summary>
-    public string Version { get; set; } = "1.0";
+    /// <summary>
+    /// The version identifier for the entity, used in migration tracking.
+    /// </summary>
+    public string Version { get; set; }
 
-    /// <summary>Optional description of the entity for documentation purposes.</summary>
+    /// <summary>
+    /// Optional description of the entity, used for documentation or extended properties.
+    /// </summary>
     public string? Description { get; set; }
 
-    /// <summary>The list of columns defined in the entity.</summary>
+    /// <summary>
+    /// The list of columns defined within the entity.
+    /// </summary>
     public List<ColumnModel> Columns { get; set; } = new();
 
-    /// <summary>Optional list of constraints (e.g., primary keys, foreign keys).</summary>
+    /// <summary>
+    /// A list of constraint identifiers applied to the entity.
+    /// </summary>
     public List<string> Constraints { get; set; } = new();
 
-    /// <summary>Optional list of indexes defined at the table level.</summary>
+    /// <summary>
+    /// A list of table-level indexes defined for the entity.
+    /// </summary>
     public List<IndexModel> TableIndexes { get; set; } = new();
 
-    /// <summary>Optional list of computed columns, if separated from regular columns.</summary>
+    /// <summary>
+    /// A list of computed columns defined within the entity.
+    /// </summary>
     public List<ColumnModel> ComputedColumns { get; set; } = new();
 
-    /// <summary>Indicates whether this entity should be ignored during generation.</summary>
-    public bool IsIgnored { get; set; } = false;
+    /// <summary>
+    /// Indicates whether the entity should be excluded from schema generation.
+    /// </summary>
+    public bool IsIgnored { get; set; }
 
-    /// <summary>Optional source of the entity definition (e.g., "Attribute", "ExternalFile").</summary>
+    /// <summary>
+    /// Optional source identifier from which the entity was derived.
+    /// </summary>
     public string? Source { get; set; }
 
-    /// <summary>Optional tags used to classify the entity (e.g., "Audit", "Reference").</summary>
+    /// <summary>
+    /// A list of tags associated with the entity, used for classification or filtering.
+    /// </summary>
     public List<string> Tags { get; set; } = new();
 
-    /// <summary>Indicates whether the entity represents a database view instead of a table.</summary>
-    public bool IsView { get; set; } = false;
+    /// <summary>
+    /// Indicates whether the entity represents a SQL view rather than a table.
+    /// </summary>
+    public bool IsView { get; set; }
 }

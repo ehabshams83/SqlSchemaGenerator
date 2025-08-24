@@ -1,7 +1,6 @@
-﻿using Syn.Core.SqlSchemaGenerator.Converters;
-using Syn.Core.SqlSchemaGenerator.Migrations.AlterTable;
-using Syn.Core.SqlSchemaGenerator.Migrations.Steps;
+﻿using Syn.Core.SqlSchemaGenerator.Migrations.Steps;
 using Syn.Core.SqlSchemaGenerator.Models;
+using Syn.Core.SqlSchemaGenerator.Converters;
 
 namespace Syn.Core.SqlSchemaGenerator.Migrations;
 

@@ -1,77 +1,123 @@
 ﻿using Syn.Core.SqlSchemaGenerator.Models;
 
 /// <summary>
-/// Represents a column within an entity, including metadata for SQL generation and schema analysis.
+/// Represents a database column within an entity model.
+/// Includes metadata for SQL generation, constraints, indexing, and documentation.
 /// </summary>
 public class ColumnModel
 {
-    /// <summary>Column name as defined in the database or model.</summary>
-    public string Name { get; set; } = null!;
+    /// <summary>
+    /// The name of the column as defined in the source code.
+    /// </summary>
+    public string Name { get; set; }
 
-    /// <summary>CLR type of the property (e.g., typeof(string), typeof(int)).</summary>
-    public Type PropertyType { get; set; } = typeof(string);
+    /// <summary>
+    /// The CLR type of the property.
+    /// </summary>
+    public Type PropertyType { get; set; }
 
-    /// <summary>Indicates whether the column should be ignored during generation.</summary>
+    /// <summary>
+    /// Indicates whether this column should be excluded from SQL generation.
+    /// </summary>
     public bool IsIgnored { get; set; }
 
-    /// <summary>Optional reason for ignoring the column.</summary>
+    /// <summary>
+    /// Optional reason for ignoring the column, useful for diagnostics or documentation.
+    /// </summary>
     public string? IgnoreReason { get; set; }
 
-    /// <summary>Indicates whether the column is computed.</summary>
+    /// <summary>
+    /// Indicates whether the column is computed (i.e., derived from an expression).
+    /// </summary>
     public bool IsComputed { get; set; }
 
-    /// <summary>SQL expression used to compute the column.</summary>
+    /// <summary>
+    /// The SQL expression used to compute the column value.
+    /// </summary>
     public string? ComputedExpression { get; set; }
 
-    /// <summary>Source of the computed column (e.g., "Manual", "Attribute").</summary>
+    /// <summary>
+    /// The source property name from which the computed column was derived.
+    /// </summary>
     public string? ComputedSource { get; set; }
 
-    /// <summary>Indicates whether the computed column is persisted in the database.</summary>
+    /// <summary>
+    /// Indicates whether the computed column is persisted in the database.
+    /// </summary>
     public bool IsPersisted { get; set; }
 
-    /// <summary>Default value assigned to the column.</summary>
+    /// <summary>
+    /// The default value assigned to the column, if any.
+    /// </summary>
     public object? DefaultValue { get; set; }
 
-    /// <summary>Collation applied to the column, if any.</summary>
+    /// <summary>
+    /// Optional collation setting for the column.
+    /// </summary>
     public string? Collation { get; set; }
 
-    /// <summary>List of check constraints applied to the column.</summary>
+    /// <summary>
+    /// A list of check constraints applied to this column.
+    /// </summary>
     public List<CheckConstraintModel> CheckConstraints { get; set; } = new();
 
-    /// <summary>List of indexes defined on the column.</summary>
+    /// <summary>
+    /// A list of indexes that include this column.
+    /// </summary>
     public List<IndexModel> Indexes { get; set; } = new();
 
-    /// <summary>Indicates whether the column has a unique constraint.</summary>
+    /// <summary>
+    /// Indicates whether the column has a unique constraint.
+    /// </summary>
     public bool IsUnique { get; set; }
 
-    /// <summary>Name of the unique constraint, if applicable.</summary>
+    /// <summary>
+    /// The name of the unique constraint, if explicitly defined.
+    /// </summary>
     public string? UniqueConstraintName { get; set; }
 
-    /// <summary>Optional description or comment for the column.</summary>
+    /// <summary>
+    /// Optional description of the column, used for documentation or extended properties.
+    /// </summary>
     public string? Description { get; set; }
 
-    /// <summary>Indicates whether the column allows null values.</summary>
+    /// <summary>
+    /// Indicates whether the column allows null values.
+    /// </summary>
     public bool IsNullable { get; set; }
 
-    /// <summary>SQL type name (e.g., "nvarchar(100)", "int").</summary>
+    /// <summary>
+    /// Optional SQL type name override (e.g., "nvarchar(100)").
+    /// </summary>
     public string? TypeName { get; set; }
 
-    /// <summary>Optional name of the source entity this column belongs to.</summary>
+    /// <summary>
+    /// The name of the source entity from which this column was derived.
+    /// </summary>
     public string? SourceEntity { get; set; }
 
-    /// <summary>Indicates whether the column is part of the primary key.</summary>
+    /// <summary>
+    /// Indicates whether the column is part of the primary key.
+    /// </summary>
     public bool IsPrimaryKey { get; set; }
 
-    /// <summary>Indicates whether the column is a foreign key.</summary>
+    /// <summary>
+    /// Indicates whether the column is a foreign key.
+    /// </summary>
     public bool IsForeignKey { get; set; }
 
-    /// <summary>Target table and column for the foreign key (e.g., "Users(Id)").</summary>
+    /// <summary>
+    /// The target entity name for the foreign key relationship.
+    /// </summary>
     public string? ForeignKeyTarget { get; set; }
 
-    /// <summary>Optional order of the column within the table definition.</summary>
-    public int? Order { get; set; }
     /// <summary>
-    /// Gets or sets the maximum length of the column, if applicable.
+    /// Optional ordering value used to control column position in generated SQL.
+    /// </summary>
+    public int? Order { get; set; }
+
+    /// <summary>
+    /// The maximum allowed length of the column (used for strings or binary types).
     /// </summary>
     public int MaxLength { get; set; }
 }

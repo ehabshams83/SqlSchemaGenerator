@@ -3,50 +3,55 @@
 namespace Syn.Core.SqlSchemaGenerator.Models
 {
     /// <summary>
-    /// Represents a database constraint (e.g., CHECK, UNIQUE, FOREIGN KEY).
+    /// Represents a constraint definition applied to an entity or column.
+    /// Supports check constraints, foreign keys, and enforcement metadata.
     /// </summary>
     public class ConstraintModel
     {
         /// <summary>
-        /// The name of the constraint in the database.
+        /// The name of the constraint.
         /// </summary>
         public string Name { get; set; }
 
         /// <summary>
-        /// The type of constraint (e.g., Check, Unique, ForeignKey).
+        /// The type of constraint (e.g., Check, ForeignKey, Unique).
         /// </summary>
         public ConstraintType Type { get; set; }
 
         /// <summary>
-        /// The SQL expression used for the constraint (e.g., CHECK expression).
+        /// The SQL expression used to define the constraint logic.
         /// </summary>
         public string Expression { get; set; }
+
+        /// <summary>
+        /// Optional description of the constraint, used for documentation or extended properties.
+        /// </summary>
         public string Description { get; set; }
 
         /// <summary>
-        /// The list of columns involved in the constraint (if applicable).
+        /// The list of column names affected by the constraint.
         /// </summary>
         public List<string> Columns { get; set; } = new();
 
         /// <summary>
-        /// Optional: Target table for foreign key constraints.
+        /// The name of the target table in case of a foreign key constraint.
         /// </summary>
         public string? ForeignKeyTargetTable { get; set; }
 
         /// <summary>
-        /// Optional: Target column(s) for foreign key constraints.
+        /// The list of target columns in the foreign key relationship.
         /// </summary>
         public List<string>? ForeignKeyTargetColumns { get; set; }
 
         /// <summary>
-        /// Optional: Whether the constraint is enforced.
+        /// Indicates whether the constraint is enforced by the database engine.
         /// </summary>
-        public bool IsEnforced { get; set; } = true;
+        public bool IsEnforced { get; set; }
 
         /// <summary>
-        /// Optional: Whether the constraint is initially trusted.
+        /// Indicates whether the constraint is trusted by the query optimizer.
         /// </summary>
-        public bool IsTrusted { get; set; } = true;
+        public bool IsTrusted { get; set; }
     }
 
     /// <summary>

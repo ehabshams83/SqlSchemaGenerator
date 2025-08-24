@@ -1,35 +1,53 @@
 ﻿namespace Syn.Core.SqlSchemaGenerator.Models;
 
 /// <summary>
-/// Represents a computed column within an entity.
-/// Used to define expressions and persistence behavior.
+/// Represents a computed column definition used in SQL generation.
+/// Includes expression, persistence, description, and optional metadata.
 /// </summary>
 public class ComputedColumnDefinition
 {
-    /// <summary>Name of the computed column.</summary>
-    public string Name { get; set; } = string.Empty;
+    /// <summary>
+    /// The name of the computed column.
+    /// </summary>
+    public string Name { get; set; }
 
-    /// <summary>SQL data type of the computed column.</summary>
-    public string DataType { get; set; } = "nvarchar(max)";
+    /// <summary>
+    /// The SQL data type of the computed column.
+    /// </summary>
+    public string DataType { get; set; }
 
-    /// <summary>SQL expression used to compute the column value.</summary>
-    public string Expression { get; set; } = string.Empty;
+    /// <summary>
+    /// The SQL expression used to compute the column value.
+    /// </summary>
+    public string Expression { get; set; }
 
-    /// <summary>Indicates whether the computed column is persisted in the database.</summary>
+    /// <summary>
+    /// Indicates whether the computed column is persisted in the database.
+    /// </summary>
     public bool IsPersisted { get; set; }
 
-    /// <summary>Optional description or comment for the computed column.</summary>
+    /// <summary>
+    /// Optional description of the computed column, used for documentation or extended properties.
+    /// </summary>
     public string? Description { get; set; }
 
-    /// <summary>Optional source of the computed column (e.g., "Attribute", "Manual").</summary>
+    /// <summary>
+    /// Optional source property name from which the column was derived.
+    /// </summary>
     public string? Source { get; set; }
 
-    /// <summary>Indicates whether the column should be ignored during generation.</summary>
+    /// <summary>
+    /// Indicates whether the column should be excluded from SQL generation.
+    /// </summary>
     public bool IsIgnored { get; set; }
 
-    /// <summary>Optional reason for ignoring the column.</summary>
+    /// <summary>
+    /// Optional reason for ignoring the column.
+    /// </summary>
     public string? IgnoreReason { get; set; }
 
-    /// <summary>Optional order of the column within the table definition.</summary>
+    /// <summary>
+    /// Optional ordering value used to control column position in generated SQL.
+    /// </summary>
     public int? Order { get; set; }
 }

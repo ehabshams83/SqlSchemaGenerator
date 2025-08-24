@@ -7,14 +7,10 @@ namespace Syn.Core.SqlSchemaGenerator.Sql;
 
 /// <summary>
 /// Generates SQL statements from migration steps.
+/// Supports extended properties for descriptions.
 /// </summary>
 public class SqlMigrationGenerator
 {
-    /// <summary>
-    /// Generates SQL script for a given migration step.
-    /// </summary>
-    /// <param name="step">The migration step to process.</param>
-    /// <returns>SQL statement as string.</returns>
     public string GenerateSql(MigrationStep step)
     {
         return step.Operation switch
@@ -33,9 +29,6 @@ public class SqlMigrationGenerator
         };
     }
 
-    /// <summary>
-    /// Generates SQL for creating a new entity (table).
-    /// </summary>
     private string GenerateCreateEntity(MigrationStep step)
     {
         if (step.Metadata?["Entity"] is not EntityModel entity)
@@ -59,31 +52,42 @@ public class SqlMigrationGenerator
             }));
         }
 
+        // Add table-level description
+        if (!string.IsNullOrWhiteSpace(entity.Description))
+        {
+            sb.AppendLine(GenerateExtendedProperty(entity.Schema, entity.Name, null, entity.Description));
+        }
+
+        // Add column-level descriptions
+        foreach (var column in entity.Columns.Where(c => !string.IsNullOrWhiteSpace(c.Description)))
+        {
+            sb.AppendLine(GenerateExtendedProperty(entity.Schema, entity.Name, column.Name, column.Description));
+        }
+
         return sb.ToString();
     }
 
-    /// <summary>
-    /// Generates SQL for dropping an entity (table).
-    /// </summary>
     private string GenerateDropEntity(MigrationStep step)
     {
         return $"DROP TABLE [{step.Schema}].[{step.EntityName}];";
     }
 
-    /// <summary>
-    /// Generates SQL for adding a column.
-    /// </summary>
     private string GenerateAddColumn(MigrationStep step)
     {
         if (step.Metadata?["Column"] is not ColumnModel column)
             return "-- Invalid column metadata";
 
-        return $"ALTER TABLE [{step.Schema}].[{step.EntityName}] ADD {BuildColumnDefinition(column)};";
+        var sb = new StringBuilder();
+        sb.AppendLine($"ALTER TABLE [{step.Schema}].[{step.EntityName}] ADD {BuildColumnDefinition(column)};");
+
+        if (!string.IsNullOrWhiteSpace(column.Description))
+        {
+            sb.AppendLine(GenerateExtendedProperty(step.Schema, step.EntityName, column.Name, column.Description));
+        }
+
+        return sb.ToString();
     }
 
-    /// <summary>
-    /// Generates SQL for dropping a column.
-    /// </summary>
     private string GenerateDropColumn(MigrationStep step)
     {
         if (step.Metadata?["Column"] is not ColumnModel column)
@@ -92,20 +96,22 @@ public class SqlMigrationGenerator
         return $"ALTER TABLE [{step.Schema}].[{step.EntityName}] DROP COLUMN [{column.Name}];";
     }
 
-    /// <summary>
-    /// Generates SQL for altering a column.
-    /// </summary>
     private string GenerateAlterColumn(MigrationStep step)
     {
         if (step.Metadata?["NewColumn"] is not ColumnModel column)
             return "-- Invalid column metadata";
 
-        return $"ALTER TABLE [{step.Schema}].[{step.EntityName}] ALTER COLUMN {BuildColumnDefinition(column)};";
+        var sb = new StringBuilder();
+        sb.AppendLine($"ALTER TABLE [{step.Schema}].[{step.EntityName}] ALTER COLUMN {BuildColumnDefinition(column)};");
+
+        if (!string.IsNullOrWhiteSpace(column.Description))
+        {
+            sb.AppendLine(GenerateExtendedProperty(step.Schema, step.EntityName, column.Name, column.Description));
+        }
+
+        return sb.ToString();
     }
 
-    /// <summary>
-    /// Generates SQL for adding an index.
-    /// </summary>
     private string GenerateAddIndex(MigrationStep step)
     {
         if (step.Metadata?["Index"] is not IndexModel index)
@@ -117,9 +123,6 @@ public class SqlMigrationGenerator
         return $"CREATE {unique}INDEX [{index.Name}] ON [{step.Schema}].[{step.EntityName}] ({columns});";
     }
 
-    /// <summary>
-    /// Generates SQL for dropping an index.
-    /// </summary>
     private string GenerateDropIndex(MigrationStep step)
     {
         if (step.Metadata?["Index"] is not IndexModel index)
@@ -128,9 +131,6 @@ public class SqlMigrationGenerator
         return $"DROP INDEX [{index.Name}] ON [{step.Schema}].[{step.EntityName}];";
     }
 
-    /// <summary>
-    /// Generates SQL for altering an index (drop + re-create).
-    /// </summary>
     private string GenerateAlterIndex(MigrationStep step)
     {
         var drop = GenerateDropIndex(step);
@@ -148,18 +148,14 @@ public class SqlMigrationGenerator
         return $"{drop}\n{add}";
     }
 
-    /// <summary>
-    /// Generates SQL for adding a constraint.
-    /// </summary>
     private string GenerateAddConstraint(MigrationStep step)
     {
         if (step.Metadata == null || !step.Metadata.TryGetValue("Constraint", out var obj) || obj is not ConstraintModel constraint)
             return "-- Invalid constraint metadata";
 
-
         var table = $"[{step.Schema}].[{step.EntityName}]";
 
-        return constraint.Type switch
+        var sql = constraint.Type switch
         {
             ConstraintType.Check =>
                 $"ALTER TABLE {table} ADD CONSTRAINT [{constraint.Name}] CHECK ({constraint.Expression});",
@@ -174,23 +170,23 @@ public class SqlMigrationGenerator
 
             _ => $"-- Unsupported constraint type: {constraint.Type}"
         };
+
+        if (!string.IsNullOrWhiteSpace(constraint.Description))
+        {
+            sql += "\n" + GenerateExtendedProperty(step.Schema, step.EntityName, null, constraint.Description);
+        }
+
+        return sql;
     }
 
-    /// <summary>
-    /// Generates SQL for dropping a constraint.
-    /// </summary>
     private string GenerateDropConstraint(MigrationStep step)
     {
         if (step.Metadata == null || !step.Metadata.TryGetValue("ConstraintName", out var obj) || obj is not ConstraintModel constraint)
             return "-- Invalid constraint metadata";
 
-
         return $"ALTER TABLE [{step.Schema}].[{step.EntityName}] DROP CONSTRAINT [{constraint.Name}];";
     }
 
-    /// <summary>
-    /// Generates SQL for a foreign key constraint.
-    /// </summary>
     private string GenerateForeignKeyConstraint(string table, ConstraintModel constraint)
     {
         if (string.IsNullOrWhiteSpace(constraint.ForeignKeyTargetTable) || constraint.ForeignKeyTargetColumns == null)
@@ -203,9 +199,6 @@ public class SqlMigrationGenerator
 REFERENCES [{constraint.ForeignKeyTargetTable}] ({targetCols});";
     }
 
-    /// <summary>
-    /// Builds SQL definition for a column.
-    /// </summary>
     private string BuildColumnDefinition(ColumnModel column)
     {
         if (column.IsComputed)
@@ -227,9 +220,6 @@ REFERENCES [{constraint.ForeignKeyTargetTable}] ({targetCols});";
         return sb.ToString();
     }
 
-    /// <summary>
-    /// Builds SQL type string for a column.
-    /// </summary>
     private string BuildType(ColumnModel column)
     {
         if (column.TypeName.StartsWith("nvarchar") && column.MaxLength > 0)
@@ -238,9 +228,6 @@ REFERENCES [{constraint.ForeignKeyTargetTable}] ({targetCols});";
         return column.TypeName;
     }
 
-    /// <summary>
-    /// Formats default value for SQL.
-    /// </summary>
     private string FormatDefaultValue(object value)
     {
         return value switch
@@ -250,5 +237,23 @@ REFERENCES [{constraint.ForeignKeyTargetTable}] ({targetCols});";
             DateTime dt => $"'{dt:yyyy-MM-dd HH:mm:ss}'",
             _ => value.ToString() ?? "NULL"
         };
+    }
+
+    private string GenerateExtendedProperty(string schema, string table, string? column, string value)
+    {
+        var escapedValue = value.Replace("'", "''");
+        var sb = new StringBuilder();
+
+        sb.AppendLine("EXEC sp_addextendedproperty");
+        sb.AppendLine("    @name = N'MS_Description',");
+        sb.AppendLine($"    @value = N'{escapedValue}',");
+        sb.AppendLine($"    @level0type = N'SCHEMA', @level0name = N'{schema}',");
+        sb.AppendLine($"    @level1type = N'TABLE',  @level1name = N'{table}'");
+
+        if (!string.IsNullOrWhiteSpace(column))
+            sb.AppendLine($", @level2type = N'COLUMN', @level2name = N'{column}'");
+
+        sb.AppendLine(";");
+        return sb.ToString();
     }
 }

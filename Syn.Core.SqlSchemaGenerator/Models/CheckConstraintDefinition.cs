@@ -1,22 +1,23 @@
 ﻿namespace Syn.Core.SqlSchemaGenerator.Models
 {
     /// <summary>
-    /// Represents a check constraint defined on an entity.
+    /// Represents a physical check constraint used in SQL generation.
+    /// Includes name, expression, and optional description.
     /// </summary>
     public class CheckConstraintDefinition
     {
         /// <summary>
-        /// Gets or sets the logical name of the check constraint.
+        /// The name of the check constraint.
         /// </summary>
-        public string Name { get; set; } = string.Empty;
+        public string Name { get; set; }
 
         /// <summary>
-        /// Gets or sets the SQL expression that defines the constraint logic.
+        /// The SQL expression that defines the constraint logic.
         /// </summary>
-        public string Expression { get; set; } = string.Empty;
+        public string Expression { get; set; }
 
         /// <summary>
-        /// Gets or sets an optional description or comment for the constraint.
+        /// Optional description of the constraint, used for documentation or extended properties.
         /// </summary>
         public string? Description { get; set; }
     }
