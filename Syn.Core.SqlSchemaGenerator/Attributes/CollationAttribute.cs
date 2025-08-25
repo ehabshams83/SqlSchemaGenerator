@@ -9,10 +9,10 @@ public class CollationAttribute : Attribute
     /// <summary>
     /// The collation name (e.g., Arabic_CI_AS).
     /// </summary>
-    public string Collation { get; }
+    public string Name { get; }
 
     public CollationAttribute(string collation)
     {
-        Collation = collation;
+        Name = collation;
     }
 }

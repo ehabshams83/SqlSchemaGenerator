@@ -22,7 +22,7 @@ public class IndexAttributeHandler : ISchemaAttributeHandler
             {
                 Name = attr.Name,
                 IsUnique = attr.IsUnique,
-                Columns = attr.IncludeColumns?.ToList() ?? new List<string>()
+                Columns = attr.Columns?.ToList() ?? new List<string>()
             };
 
             column.Indexes.Add(index);

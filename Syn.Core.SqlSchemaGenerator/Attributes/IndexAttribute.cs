@@ -19,6 +19,6 @@
         /// <summary>
         /// Optional list of included columns for covering index.
         /// </summary>
-        public string[]? IncludeColumns { get; set; }
+        public string[]? Columns { get; set; }
     }
 }

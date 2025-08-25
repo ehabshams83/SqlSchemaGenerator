@@ -17,7 +17,7 @@ public class CollationAttributeHandler : ISchemaAttributeHandler
         var attr = property.GetCustomAttribute<CollationAttribute>();
         if (attr != null)
         {
-            column.Collation = attr.Collation;
+            column.Collation = attr.Name;
         }
     }
 }
