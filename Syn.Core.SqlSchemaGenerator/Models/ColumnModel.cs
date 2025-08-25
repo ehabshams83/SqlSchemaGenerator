@@ -120,4 +120,19 @@ public class ColumnModel
     /// The maximum allowed length of the column (used for strings or binary types).
     /// </summary>
     public int? MaxLength { get; set; }
+    /// <summary>
+    /// Numeric precision for decimal or numeric data types.
+    /// Null if not applicable.
+    /// </summary>
+    public int? Precision { get; set; }
+
+    /// <summary>
+    /// Numeric scale for decimal or numeric data types.
+    /// Null if not applicable.
+    /// </summary>
+    public int? Scale { get; set; }
+    public string? ForeignKeyTable { get; set; }
+    public string? ForeignKeyColumn { get; set; }
+
+
 }

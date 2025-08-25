@@ -7,18 +7,18 @@ using System.Reflection;
 namespace Syn.Core.SqlSchemaGenerator.AttributeHandlers
 {
     /// <summary>
-    /// Applies <see cref="CollationAttribute"/> values to the column model.
+    /// Applies <see cref="CommentAttribute"/> to the column description.
     /// </summary>
-    public class CollationAttributeHandler : ISchemaAttributeHandler
+    public class CommentAttributeHandler : ISchemaAttributeHandler
     {
         public void Apply(PropertyInfo property, ColumnModel column)
         {
             if (property == null) throw new ArgumentNullException(nameof(property));
             if (column == null) throw new ArgumentNullException(nameof(column));
 
-            var attr = property.GetCustomAttribute<CollationAttribute>();
+            var attr = property.GetCustomAttribute<CommentAttribute>();
             if (attr != null)
-                column.Collation = attr.Name;
+                column.Description = attr.Text;
         }
     }
 }

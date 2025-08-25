@@ -33,6 +33,7 @@ public class EntityDefinitionBuilder
 {
     private readonly IEnumerable<ISchemaAttributeHandler> _handlers;
 
+
     #region Constructors
 
     /// <summary>
@@ -53,21 +54,7 @@ public class EntityDefinitionBuilder
     /// </example>
     public EntityDefinitionBuilder()
     {
-        _handlers = new ISchemaAttributeHandler[]
-        {
-            new KeyAttributeHandler(),
-            new IndexAttributeHandler(),
-            new UniqueAttributeHandler(),
-            new DefaultValueAttributeHandler(),
-            new DescriptionAttributeHandler(),
-            new RequiredAttributeHandler(),
-            new MaxLengthAttributeHandler(),
-            new ComputedAttributeHandler(),
-            new CollationAttributeHandler(),
-            new CheckConstraintAttributeHandler(),
-            new IgnoreColumnAttributeHandler(),
-            new EfCompatibilityAttributeHandler(),
-        };
+        _handlers = _attributeseHandlers;
     }
 
     /// <summary>
@@ -88,9 +75,9 @@ public class EntityDefinitionBuilder
     /// var definition = builder.Build(typeof(Customer));
     /// </code>
     /// </example>
-    public EntityDefinitionBuilder(IEnumerable<ISchemaAttributeHandler> handlers)
+    public EntityDefinitionBuilder(IEnumerable<ISchemaAttributeHandler> handlers = null)
     {
-        _handlers = handlers ?? throw new ArgumentNullException(nameof(handlers));
+        _handlers = handlers ?? _attributeseHandlers;
     }
 
     #endregion
@@ -824,7 +811,24 @@ public class EntityDefinitionBuilder
     }
 
 
-
+    private ISchemaAttributeHandler[] _attributeseHandlers => new ISchemaAttributeHandler[]
+    {
+            new KeyAttributeHandler(),
+            new IndexAttributeHandler(),
+            new UniqueAttributeHandler(),
+            new DefaultValueAttributeHandler(),
+            new DescriptionAttributeHandler(),
+            new RequiredAttributeHandler(),
+            new MaxLengthAttributeHandler(),
+            new ComputedAttributeHandler(),
+            new CollationAttributeHandler(),
+            new CheckConstraintAttributeHandler(),
+            new IgnoreColumnAttributeHandler(),
+            new EfCompatibilityAttributeHandler(),
+            new PrecisionAttributeHandler(),
+            new CommentAttributeHandler(),
+            new ForeignKeyAttributeHandler()
+    };
 
     /// <summary>
     /// Infers SQL type name from CLR type if not explicitly provided.
