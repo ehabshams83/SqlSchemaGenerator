@@ -83,6 +83,7 @@ public class EntityDefinitionBuilder
     #endregion
 
 
+
     /// <summary>
     /// Builds an <see cref="EntityDefinition"/> instance from the specified CLR type.
     /// </summary>
@@ -122,7 +123,9 @@ public class EntityDefinitionBuilder
         if (tableDescAttr != null && !string.IsNullOrWhiteSpace(tableDescAttr.Text))
             entity.Description = tableDescAttr.Text;
 
-        foreach (var prop in entityType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        foreach (var prop in entityType
+    .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+    .Where(p => p.GetCustomAttribute<NotMappedAttribute>() == null))
         {
             var columnName = GetColumnName(prop);
             var isNullable = IsNullable(prop);

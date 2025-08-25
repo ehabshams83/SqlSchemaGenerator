@@ -29,6 +29,7 @@ namespace Syn.Core.SqlSchemaGenerator.Models
         /// The list of indexes defined for the entity.
         /// </summary>
         public List<IndexDefinition> Indexes { get; set; } = new();
+        public List<ConstraintDefinition> Constraints { get; set; }
 
         /// <summary>
         /// The list of check constraints applied to the entity.

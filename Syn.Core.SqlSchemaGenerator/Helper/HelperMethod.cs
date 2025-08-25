@@ -201,5 +201,31 @@ REFERENCES [{fk.ReferencedTable}]([{fk.ReferencedColumn}])
             var dbGenAttr = prop.GetCustomAttribute<DatabaseGeneratedAttribute>();
             return dbGenAttr?.DatabaseGeneratedOption == DatabaseGeneratedOption.Identity;
         }
+
+
+
+        public static string FormatDefaultValue(object defaultValue)
+        {
+            if (defaultValue == null)
+                return "NULL";
+
+            // لو القيمة دالة SQL أو تعبير بدون علامات اقتباس
+            if (defaultValue is string strVal)
+            {
+                var trimmed = strVal.Trim();
+
+                // لو النص بيبدأ وينتهي بقوس أو معروف إنه دالة
+                if (trimmed.EndsWith(")") || trimmed.Contains("("))
+                    return trimmed;
+
+                // إرجاع النص بين أقواس مفردة مع استبدال أي ' بـ ''
+                return $"'{trimmed.Replace("'", "''")}'";
+            }
+
+            // أي نوع رقمى أو منطقى
+            return Convert.ToString(defaultValue, System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+
     }
 }
