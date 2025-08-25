@@ -163,6 +163,10 @@ public class EntityDefinitionBuilder
             // Column definition
             var columnDef = ToColumnDefinition(columnModel);
 
+            // ✅ إضافة فحص الـ Identity الموحّد
+            columnDef.IsIdentity = prop.HasIdentityAttribute();
+
+
             // Optional: Column description from attribute (if any)
             var colDescAttr = prop.GetCustomAttribute<DescriptionAttribute>();
             if (colDescAttr != null && !string.IsNullOrWhiteSpace(colDescAttr.Text))
@@ -818,6 +822,8 @@ public class EntityDefinitionBuilder
         var attr = prop.GetCustomAttribute<DefaultValueAttribute>();
         return attr?.Value;
     }
+
+
 
 
     /// <summary>

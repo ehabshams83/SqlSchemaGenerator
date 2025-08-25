@@ -194,5 +194,12 @@ REFERENCES [{fk.ReferencedTable}]([{fk.ReferencedColumn}])
 
             return indexes;
         }
+
+
+        public static bool HasIdentityAttribute(this PropertyInfo prop)
+        {
+            var dbGenAttr = prop.GetCustomAttribute<DatabaseGeneratedAttribute>();
+            return dbGenAttr?.DatabaseGeneratedOption == DatabaseGeneratedOption.Identity;
+        }
     }
 }

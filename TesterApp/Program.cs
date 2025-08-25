@@ -25,23 +25,23 @@ namespace TesterApp
 
             EnsureDatabaseExists(server, databaseName);
 
-            // Handlers
-            var handlers = new List<ISchemaAttributeHandler>
-            {
-                new IndexAttributeHandler(),
-                new UniqueAttributeHandler(),
-                new DefaultValueAttributeHandler(),
-                new DescriptionAttributeHandler(),
-                new RequiredAttributeHandler(),
-                new MaxLengthAttributeHandler(),
-                new ComputedAttributeHandler(),
-                new CollationAttributeHandler(),
-                new CheckConstraintAttributeHandler(),
-                new IgnoreColumnAttributeHandler(),
-                new EfCompatibilityAttributeHandler()
-            };
+            //// Handlers
+            //var handlers = new List<ISchemaAttributeHandler>
+            //{
+            //    new IndexAttributeHandler(),
+            //    new UniqueAttributeHandler(),
+            //    new DefaultValueAttributeHandler(),
+            //    new DescriptionAttributeHandler(),
+            //    new RequiredAttributeHandler(),
+            //    new MaxLengthAttributeHandler(),
+            //    new ComputedAttributeHandler(),
+            //    new CollationAttributeHandler(),
+            //    new CheckConstraintAttributeHandler(),
+            //    new IgnoreColumnAttributeHandler(),
+            //    new EfCompatibilityAttributeHandler()
+            //};
 
-            var builder = new EntityDefinitionBuilder(handlers);
+            var builder = new EntityDefinitionBuilder();
             var scanner = new EntityScanner(builder);
 
             // نحضر snapshot قديم (فارغ أول مرة)
