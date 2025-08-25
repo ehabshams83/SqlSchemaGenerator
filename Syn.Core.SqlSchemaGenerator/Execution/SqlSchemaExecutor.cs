@@ -9,8 +9,8 @@ namespace Syn.Core.SqlSchemaGenerator.Execution
     /// </summary>
     public class SqlSchemaExecutor
     {
-        private readonly SqlTableBuilder _tableBuilder = new();
-        private readonly SqlDropTableBuilder _dropBuilder = new();
+        private readonly SqlTableScriptBuilder _tableBuilder = new();
+        private readonly SqlTableScriptBuilder _dropBuilder = new();
 
         /// <summary>
         /// Generates CREATE TABLE scripts for all public classes in the given assembly.
@@ -38,7 +38,7 @@ namespace Syn.Core.SqlSchemaGenerator.Execution
                 .ToList();
 
             var scripts = types
-                .Select(t => _dropBuilder.Build(t.Name))
+                .Select(t => _dropBuilder.Build(t))
                 .ToList();
 
             return string.Join("\n", scripts);
@@ -48,12 +48,12 @@ namespace Syn.Core.SqlSchemaGenerator.Execution
         /// Generates CREATE TABLE script for a single entity type.
         /// </summary>
         public string GenerateCreateScript(Type entityType) =>
-            _tableBuilder.Build(entityType);
+            _tableBuilder.BuildScriptFromType(entityType);
 
         /// <summary>
         /// Generates DROP TABLE script for a single entity type.
         /// </summary>
         public string GenerateDropScript(Type entityType) =>
-            _dropBuilder.Build(entityType.Name);
+            _dropBuilder.BuildScriptFromType(entityType);
     }
 }

@@ -111,6 +111,15 @@ public class EntityDefinitionBuilder
     /// Console.WriteLine($"Entity: {def.Name}, Columns: {def.Columns.Count}");
     /// </code>
     /// </example>
+    /// <summary>
+    /// Builds an <see cref="EntityDefinition"/> model from the specified entity <see cref="Type"/>.
+    /// This method scans the entity type's public instance properties, applies column handlers,
+    /// and populates all relevant metadata, including columns, computed columns, constraints,
+    /// indexes, and optional descriptions. The resulting definition is ready for SQL generation
+    /// using the unified <c>Build(EntityDefinition)</c> method.
+    /// </summary>
+    /// <param name="entityType">The CLR type representing the entity to analyze.</param>
+    /// <returns>A fully populated <see cref="EntityDefinition"/> instance.</returns>
     public EntityDefinition Build(Type entityType)
     {
         var (schema, table) = entityType.GetTableInfo();
@@ -120,6 +129,11 @@ public class EntityDefinitionBuilder
             Name = table,
             Schema = schema
         };
+
+        // Optional: Table-level description from attribute (if any)
+        var tableDescAttr = entityType.GetCustomAttribute<DescriptionAttribute>();
+        if (tableDescAttr != null && !string.IsNullOrWhiteSpace(tableDescAttr.Text))
+            entity.Description = tableDescAttr.Text;
 
         foreach (var prop in entityType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
         {
@@ -137,6 +151,7 @@ public class EntityDefinitionBuilder
                 DefaultValue = defaultValue
             };
 
+            // Apply registered handlers to enrich column model
             foreach (var handler in _handlers)
             {
                 handler.Apply(prop, columnModel);
@@ -145,13 +160,18 @@ public class EntityDefinitionBuilder
             if (columnModel.IsIgnored)
                 continue;
 
-
             // Column definition
             var columnDef = ToColumnDefinition(columnModel);
+
+            // Optional: Column description from attribute (if any)
+            var colDescAttr = prop.GetCustomAttribute<DescriptionAttribute>();
+            if (colDescAttr != null && !string.IsNullOrWhiteSpace(colDescAttr.Text))
+                columnDef.Description = colDescAttr.Text;
+
             entity.Columns.Add(columnDef);
 
             // Computed column
-            if (columnModel.ComputedExpression != null)
+            if (!string.IsNullOrWhiteSpace(columnModel.ComputedExpression))
             {
                 var computed = new ComputedColumnDefinition
                 {
@@ -170,13 +190,27 @@ public class EntityDefinitionBuilder
             entity.Indexes.AddRange(indexes);
         }
 
+        // Primary key
         entity.PrimaryKey = GetPrimaryKey(entityType);
+
+        // Unique constraints
         entity.UniqueConstraints = GetUniqueConstraints(entityType);
+
+        // Foreign keys (enrich ConstraintName if missing)
         entity.ForeignKeys = entityType.GetForeignKeys();
+        foreach (var fk in entity.ForeignKeys)
+        {
+            if (string.IsNullOrWhiteSpace(fk.ConstraintName))
+                fk.ConstraintName = $"FK_{entity.Name}_{fk.Column}";
+        }
+
         ValidateForeignKeys(entity);
 
+        // Class-level indexes
         var classLevelIndexes = GetIndexes(entityType);
         entity.Indexes.AddRange(classLevelIndexes);
+
+        // Deduplicate indexes by name
         entity.Indexes = entity.Indexes
             .GroupBy(ix => ix.Name)
             .Select(g => g.First())
@@ -184,7 +218,6 @@ public class EntityDefinitionBuilder
 
         return entity;
     }
-
     /// <summary>
     /// Builds multiple <see cref="EntityDefinition"/> instances from the provided CLR types.
     /// </summary>
