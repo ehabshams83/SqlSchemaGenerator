@@ -1,9 +1,14 @@
-﻿using Syn.Core.SqlSchemaGenerator.AttributeHandlers;
+﻿using Microsoft.Extensions.Logging;
+
+using Syn.Core.SqlSchemaGenerator.AttributeHandlers;
+using Syn.Core.SqlSchemaGenerator.Attributes;
 using Syn.Core.SqlSchemaGenerator.Interfaces;
 using Syn.Core.SqlSchemaGenerator.Migrations.AlterTable;
 using Syn.Core.SqlSchemaGenerator.Models;
 
 using System.Collections.Concurrent;
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 using System.Reflection;
 
 namespace Syn.Core.SqlSchemaGenerator.Builders;
@@ -109,18 +114,28 @@ public class EntityDefinitionBuilder
     /// </example>
     public EntityDefinition Build(Type entityType)
     {
+        var (schema, table) = GetTableInfo(entityType);
+
         var entity = new EntityDefinition
         {
-            Name = entityType.Name,
-            Schema = "dbo"
+            Name = table,
+            Schema = schema
         };
 
         foreach (var prop in entityType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
         {
+            var columnName = GetColumnName(prop);
+            var isNullable = IsNullable(prop);
+            var maxLength = GetMaxLength(prop);
+            var defaultValue = GetDefaultValue(prop);
+
             var columnModel = new ColumnModel
             {
-                Name = prop.Name,
-                PropertyType = prop.PropertyType
+                Name = columnName,
+                PropertyType = prop.PropertyType,
+                IsNullable = isNullable,
+                MaxLength = maxLength,
+                DefaultValue = defaultValue
             };
 
             foreach (var handler in _handlers)
@@ -131,14 +146,21 @@ public class EntityDefinitionBuilder
             if (columnModel.IsIgnored)
                 continue;
 
+
             // Column definition
             var columnDef = ToColumnDefinition(columnModel);
             entity.Columns.Add(columnDef);
 
             // Computed column
-            var computed = ToComputed(columnModel);
-            if (computed is not null)
+            if (columnModel.ComputedExpression != null)
+            {
+                var computed = new ComputedColumnDefinition
+                {
+                    Name = columnName,
+                    Expression = columnModel.ComputedExpression
+                };
                 entity.ComputedColumns.Add(computed);
+            }
 
             // Check constraints
             var checks = ToCheckConstraints(columnModel, entity.Name);
@@ -148,6 +170,18 @@ public class EntityDefinitionBuilder
             var indexes = ToIndexes(columnModel, entity.Name);
             entity.Indexes.AddRange(indexes);
         }
+
+        entity.PrimaryKey = GetPrimaryKey(entityType);
+        entity.UniqueConstraints = GetUniqueConstraints(entityType);
+        entity.ForeignKeys = GetForeignKeys(entityType);
+        ValidateForeignKeys(entity);
+
+        var classLevelIndexes = GetIndexes(entityType);
+        entity.Indexes.AddRange(classLevelIndexes);
+        entity.Indexes = entity.Indexes
+            .GroupBy(ix => ix.Name)
+            .Select(g => g.First())
+            .ToList();
 
         return entity;
     }
@@ -519,6 +553,12 @@ public class EntityDefinitionBuilder
 
             TypeName = model.TypeName ?? InferSqlType(model.PropertyType),
             IsNullable = model.IsNullable,
+            IsForeignKey = model.IsForeignKey,
+            IsUnique = model.IsUnique,
+            IsPrimaryKey = model.IsPrimaryKey,
+            UniqueConstraintName = model.UniqueConstraintName,
+            IgnoreReason = model.IgnoreReason,
+            IsIgnored = model.IsIgnored,
             DefaultValue = model.DefaultValue,
             Collation = model.Collation,
             Description = model.Description
@@ -552,6 +592,27 @@ public class EntityDefinitionBuilder
         });
     }
 
+    private static List<IndexDefinition> GetIndexes(Type type)
+    {
+        var indexes = new List<IndexDefinition>();
+
+        foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        {
+            var indexAttrs = prop.GetCustomAttributes<IndexAttribute>();
+            foreach (var attr in indexAttrs)
+            {
+                indexes.Add(new IndexDefinition
+                {
+                    Name = attr.Name ?? $"IX_{type.Name}_{prop.Name}",
+                    Columns = new List<string> { GetColumnName(prop) },
+                    IsUnique = attr.IsUnique
+                });
+            }
+        }
+
+        return indexes;
+    }
+
     /// <summary>
     /// Converts index definitions from ColumnModel to IndexDefinition.
     /// </summary>
@@ -576,6 +637,223 @@ public class EntityDefinitionBuilder
 
         return indexes;
     }
+
+
+    /// <summary>
+    /// Extracts the table name and schema from SqlTableAttribute or TableAttribute, or defaults to type name and 'dbo'.
+    /// Logs a warning if both attributes are present.
+    /// </summary>
+    /// <param name="type">The entity type to inspect.</param>
+    /// <param name="logger">Optional logger for diagnostics.</param>
+    /// <returns>A tuple of (schemaName, tableName).</returns>
+    private static (string Schema, string Table) GetTableInfo(Type type)
+    {
+        var sqlTableAttr = type.GetCustomAttribute<SqlTableAttribute>();
+        var tableAttr = type.GetCustomAttribute<TableAttribute>();
+
+        // Log warning if both attributes are present
+        if (sqlTableAttr != null && tableAttr != null)
+        {
+            var loggerFactory = LoggerFactory.Create(builder =>
+            {
+                builder
+                    .AddConsole()
+                    .SetMinimumLevel(LogLevel.Warning); // أو Debug لو عاوز تفاصيل أكتر
+            });
+            ILogger logger = loggerFactory.CreateLogger("SqlSchemaGenerator");
+
+            logger?.LogWarning(
+                "Type '{TypeName}' has both [SqlTable] and [Table] attributes. [SqlTable] will take precedence.",
+                type.FullName
+            );
+        }
+
+        if (sqlTableAttr != null)
+        {
+            return (sqlTableAttr.Schema, sqlTableAttr.Name);
+        }
+
+        var tableName = tableAttr?.Name?.Trim();
+        var schemaName = tableAttr?.Schema?.Trim();
+
+        tableName ??= type.Name;
+        schemaName ??= "dbo";
+
+        return (schemaName, tableName);
+    }
+
+
+    /// <summary>
+    /// Extracts primary key columns from [Key] attributes.
+    /// </summary>
+    private static PrimaryKeyDefinition? GetPrimaryKey(Type type)
+    {
+        var pkColumns = type
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(p => p.GetCustomAttribute<KeyAttribute>() != null)
+            .Select(p => p.Name)
+            .ToList();
+
+        if (pkColumns.Count == 0)
+            return null;
+
+        return new PrimaryKeyDefinition
+        {
+            Columns = pkColumns,
+            IsAutoGenerated = true
+        };
+    }
+
+
+    /// <summary>
+    /// Extracts unique constraints from [Unique] and [Index(IsUnique = true)] attributes.
+    /// Supports both property-level and class-level Index definitions.
+    /// </summary>
+    /// <param name="type">The entity type to inspect.</param>
+    /// <returns>List of unique constraint definitions.</returns>
+    private static List<UniqueConstraintDefinition> GetUniqueConstraints(Type type)
+    {
+        var uniqueConstraints = new List<UniqueConstraintDefinition>();
+        var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // ✅ Property-level: [Unique] or [Index(IsUnique = true)]
+        foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        {
+            var columnName = prop.Name;
+
+            // [Unique] (custom)
+            if (prop.GetCustomAttribute<UniqueAttribute>() != null)
+            {
+                var key = $"UQ_{type.Name}_{columnName}";
+                if (seenKeys.Add(key))
+                {
+                    uniqueConstraints.Add(new UniqueConstraintDefinition
+                    {
+                        Name = key,
+                        Columns = new List<string> { columnName },
+                        IsAutoGenerated = true
+                    });
+                }
+            }
+
+            // [Index(IsUnique = true)] from EF Core
+            var indexAttrs = prop.GetCustomAttributes<IndexAttribute>();
+            foreach (var indexAttr in indexAttrs)
+            {
+                if (indexAttr.IsUnique)
+                {
+                    var name = indexAttr.Name ?? $"UQ_{type.Name}_{columnName}";
+                    if (seenKeys.Add(name))
+                    {
+                        uniqueConstraints.Add(new UniqueConstraintDefinition
+                        {
+                            Name = name,
+                            Columns = new List<string> { columnName },
+                            IsAutoGenerated = true
+                        });
+                    }
+                }
+            }
+        }
+
+        // ✅ Class-level: [Index(nameof(Column1), nameof(Column2), IsUnique = true)]
+        var classLevelIndexes = type.GetCustomAttributes<IndexAttribute>();
+        foreach (var indexAttr in classLevelIndexes)
+        {
+            if (indexAttr.IsUnique && indexAttr.IncludeColumns?.Length > 0)
+            {
+                var name = indexAttr.Name ?? $"UQ_{type.Name}_{string.Join("_", indexAttr.IncludeColumns)}";
+                if (seenKeys.Add(name))
+                {
+                    uniqueConstraints.Add(new UniqueConstraintDefinition
+                    {
+                        Name = name,
+                        Columns = indexAttr.IncludeColumns?.ToList(),
+                        IsAutoGenerated = true
+                    });
+                }
+            }
+        }
+
+        return uniqueConstraints;
+    }
+
+
+    /// <summary>
+    /// Extracts foreign key relationships from [ForeignKey] attributes.
+    /// </summary>
+    private static List<ForeignKeyDefinition> GetForeignKeys(Type type)
+    {
+        var foreignKeys = new List<ForeignKeyDefinition>();
+
+        foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        {
+            var fkAttr = prop.GetCustomAttribute<ForeignKeyAttribute>();
+            if (fkAttr != null)
+            {
+                foreignKeys.Add(new ForeignKeyDefinition
+                {
+                    Column = prop.Name,
+                    ReferencedTable = fkAttr.Name,
+                    ReferencedColumn = "Id", // قابلة للتوسعة لاحقًا
+                    OnDelete = ReferentialAction.Cascade,
+                    OnUpdate = ReferentialAction.NoAction
+                });
+            }
+        }
+
+        return foreignKeys;
+    }
+
+    private static void ValidateForeignKeys(EntityDefinition entity)
+    {
+        foreach (var fk in entity.ForeignKeys)
+        {
+            if (!entity.Columns.Any(c => c.Name == fk.Column))
+            {
+                throw new InvalidOperationException(
+                    $"Foreign key column '{fk.Column}' not found in entity '{entity.Name}'."
+                );
+            }
+        }
+    }
+
+
+    /// <summary>
+    /// Determines nullability of columns based on [Required] attribute.
+    /// </summary>
+    private static bool IsNullable(PropertyInfo prop)
+    {
+        return prop.GetCustomAttribute<RequiredAttribute>() == null;
+    }
+
+    /// <summary>
+    /// Extracts max length constraint from [MaxLength] attribute.
+    /// </summary>
+    private static int? GetMaxLength(PropertyInfo prop)
+    {
+        var maxAttr = prop.GetCustomAttribute<MaxLengthAttribute>();
+        return maxAttr?.Length;
+    }
+
+    /// <summary>
+    /// Extracts column name override from [Column] attribute.
+    /// </summary>
+    private static string GetColumnName(PropertyInfo prop)
+    {
+        var colAttr = prop.GetCustomAttribute<ColumnAttribute>();
+        return colAttr?.Name?.Trim() ?? prop.Name;
+    }
+
+    /// <summary>
+    /// Extracts default value from [DefaultValue] attribute.
+    /// </summary>
+    private static object? GetDefaultValue(PropertyInfo prop)
+    {
+        var attr = prop.GetCustomAttribute<DefaultValueAttribute>();
+        return attr?.Value;
+    }
+
 
     /// <summary>
     /// Infers SQL type name from CLR type if not explicitly provided.

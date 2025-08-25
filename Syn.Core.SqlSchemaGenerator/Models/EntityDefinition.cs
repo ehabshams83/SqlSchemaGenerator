@@ -49,5 +49,17 @@ namespace Syn.Core.SqlSchemaGenerator.Models
         /// Indicates whether the entity should be excluded from SQL generation.
         /// </summary>
         public bool IsIgnored { get; set; }
+        /// <summary>
+        /// The primary key definition for the entity, if any.
+        /// </summary>
+        public PrimaryKeyDefinition? PrimaryKey { get; set; }
+
+        /// <summary>
+        /// The list of unique constraints defined for the entity.
+        /// </summary>
+        public List<UniqueConstraintDefinition> UniqueConstraints { get; set; } = new();
+
+        public List<ForeignKeyDefinition> ForeignKeys { get; set; } = [];
+
     }
 }

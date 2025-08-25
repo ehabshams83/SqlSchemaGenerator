@@ -119,5 +119,5 @@ public class ColumnModel
     /// <summary>
     /// The maximum allowed length of the column (used for strings or binary types).
     /// </summary>
-    public int MaxLength { get; set; }
+    public int? MaxLength { get; set; }
 }
