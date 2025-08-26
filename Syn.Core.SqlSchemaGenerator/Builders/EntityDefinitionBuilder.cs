@@ -1,14 +1,15 @@
 ﻿
 using Syn.Core.SqlSchemaGenerator.AttributeHandlers;
 using Syn.Core.SqlSchemaGenerator.Attributes;
+using Syn.Core.SqlSchemaGenerator.Helper;
 using Syn.Core.SqlSchemaGenerator.Interfaces;
 using Syn.Core.SqlSchemaGenerator.Models;
 
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Reflection;
-using Syn.Core.SqlSchemaGenerator.Helper;
 
 namespace Syn.Core.SqlSchemaGenerator.Builders;
 
@@ -29,7 +30,7 @@ namespace Syn.Core.SqlSchemaGenerator.Builders;
 /// </code>
 /// </example>
 
-public class EntityDefinitionBuilder
+public partial class EntityDefinitionBuilder
 {
     private readonly IEnumerable<ISchemaAttributeHandler> _handlers;
 
@@ -115,7 +116,8 @@ public class EntityDefinitionBuilder
         var entity = new EntityDefinition
         {
             Name = table,
-            Schema = schema
+            Schema = schema,
+            ClrType = entityType
         };
 
         // Optional: Table-level description from attribute (if any)
@@ -197,6 +199,8 @@ public class EntityDefinitionBuilder
             if (string.IsNullOrWhiteSpace(fk.ConstraintName))
                 fk.ConstraintName = $"FK_{entity.Name}_{fk.Column}";
         }
+        // 🔹 استنتاج العلاقات من الـ Navigation Properties
+        InferForeignKeysFromNavigation(entityType, entity);
 
         ValidateForeignKeys(entity);
 
@@ -240,6 +244,37 @@ public class EntityDefinitionBuilder
         return result;
     }
 
+    /// <summary>
+    /// Builds all entity definitions from the given CLR types,
+    /// and infers navigation-based relationships (One-to-Many, Many-to-Many, One-to-One).
+    /// </summary>
+    /// <param name="entityTypes">The CLR types to build from.</param>
+    /// <returns>
+    /// A list of enriched <see cref="EntityDefinition"/> objects.
+    /// </returns>
+    public List<EntityDefinition> BuildAllWithRelationships(IEnumerable<Type> entityTypes)
+    {
+        var allEntities = entityTypes
+            .Where(t => t.IsClass && t.IsPublic && !t.IsAbstract)
+            .Select(t =>
+            {
+                var entity = Build(t);
+                entity.ClrType = t;
+                return entity;
+            })
+            .ToList();
+        List<EntityDefinition> result = [];
+        result.AddRange(allEntities);
+
+        foreach (var entity in result)
+        {
+            InferForeignKeysFromNavigation(entity.ClrType, entity);
+            InferCollectionRelationships(entity.ClrType, entity, allEntities);
+            InferOneToOneRelationships(entity.ClrType, entity, allEntities);
+        }
+
+        return allEntities;
+    }
 
     /// <summary>
     /// Builds multiple <see cref="EntityDefinition"/> instances by scanning all public

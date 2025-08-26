@@ -15,7 +15,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 
-using TesterApp.Entities;
+using TesterApp.Models.MTM;
 
 namespace Syn.Core.SqlSchemaGenerator.ConsoleApp
 {

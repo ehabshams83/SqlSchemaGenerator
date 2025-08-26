@@ -1,13 +1,5 @@
-﻿using Syn.Core.SqlSchemaGenerator.Helper;
-using Syn.Core.SqlSchemaGenerator.Models;
+﻿using Syn.Core.SqlSchemaGenerator.Models;
 
-using System;
-using System.Linq;
-using System.Text;
-
-using Syn.Core.SqlSchemaGenerator.Models;
-using System;
-using System.Linq;
 using System.Text;
 
 namespace Syn.Core.SqlSchemaGenerator.Builders

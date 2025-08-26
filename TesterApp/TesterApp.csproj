@@ -13,5 +13,8 @@
 	<ItemGroup>
 		<ProjectReference Include="..\Syn.Core.SqlSchemaGenerator\Syn.Core.SqlSchemaGenerator.csproj" />
 	</ItemGroup>
+	<ItemGroup>
+	  <Folder Include="MigrationLib\" />
+	</ItemGroup>
 
 </Project>

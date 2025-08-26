@@ -61,6 +61,8 @@ namespace Syn.Core.SqlSchemaGenerator.Models
         public List<UniqueConstraintDefinition> UniqueConstraints { get; set; } = new();
 
         public List<ForeignKeyDefinition> ForeignKeys { get; set; } = [];
+        public Type ClrType { get; set; }
+        public List<RelationshipDefinition> Relationships { get; set; } = [];
 
     }
 }
