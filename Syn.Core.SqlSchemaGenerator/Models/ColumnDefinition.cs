@@ -19,7 +19,7 @@ public class ColumnDefinition
     public int? Scale { get; set; }
 
     /// <summary>Indicates whether the column allows null values.</summary>
-    public bool IsNullable { get; set; }
+    public bool IsNullable { get; set; } = true;
 
     /// <summary>The default value assigned to the column, if any.</summary>
     public object? DefaultValue { get; set; }

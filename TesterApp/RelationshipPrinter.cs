@@ -21,11 +21,11 @@ namespace TesterApp
                 {
                     string arrow = rel.Type switch
                     {
-                        RelationshipType.OneToOne => "───1:1───▶",
-                        RelationshipType.OneToMany => "───1:N───▶",
-                        RelationshipType.ManyToOne => "───N:1───▶",
-                        RelationshipType.ManyToMany => "───N:N───▶",
-                        _ => "──────▶"
+                        RelationshipType.OneToOne => "───1:1───>",
+                        RelationshipType.OneToMany => "───1:N───>",
+                        RelationshipType.ManyToOne => "───N:1───>",
+                        RelationshipType.ManyToMany => "───N:N───>",
+                        _ => "──────>"
                     };
 
                     string joinInfo = rel.Type == RelationshipType.ManyToMany

@@ -24,13 +24,13 @@ namespace Syn.Core.SqlSchemaGenerator.Execution
         /// Initializes a new instance of the <see cref="SqlSchemaExecutor"/> class
         /// with all builders wired to a shared <see cref="EntityDefinitionBuilder"/>.
         /// </summary>
-        public SqlSchemaExecutor()
+        public SqlSchemaExecutor(DatabaseSchemaReader schemaReader)
         {
             _entityDefinitionBuilder = new EntityDefinitionBuilder();
             _tableBuilder = new SqlTableScriptBuilder(_entityDefinitionBuilder);
             _dropTableBuilder = new SqlDropTableBuilder(_entityDefinitionBuilder);
             _indexBuilder = new SqlIndexScriptBuilder(_entityDefinitionBuilder);
-            _constraintBuilder = new SqlConstraintScriptBuilder(_entityDefinitionBuilder);
+            _constraintBuilder = new SqlConstraintScriptBuilder(_entityDefinitionBuilder, schemaReader);
         }
 
         /// <summary>

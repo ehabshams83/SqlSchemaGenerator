@@ -2,6 +2,7 @@
 
 using Syn.Core.SqlSchemaGenerator;
 using Syn.Core.SqlSchemaGenerator.Builders;
+using Syn.Core.SqlSchemaGenerator.Models;
 
 using TesterApp.Models.MTM;
 
@@ -25,8 +26,11 @@ class Program
             .SelectMany(a => a.GetTypes())
             .Where(t => t.IsClass && t.IsPublic && !t.IsAbstract);
 
-        var entities = entityDefBuilder.BuildAllWithRelationships(entityTypes);
-        RelationshipPrinter.PrintRelationshipGraph(entities);
+        //var entities = entityDefBuilder.BuildAllWithRelationships(entityTypes);
+        
+
+
+        //RelationshipPrinter.PrintRelationshipGraph(entities);
 
         // ✅ تنفيذ الترحيل
         MigrationRunner.AutoMigrate(connectionString, assemblies);

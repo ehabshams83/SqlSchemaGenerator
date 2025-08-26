@@ -8,6 +8,10 @@ public class RelationshipDefinition
     public RelationshipType Type { get; set; }         // نوع العلاقة
     public string? JoinEntityName { get; set; }        // اسم الجدول الوسيط لو Many-to-Many
     public bool IsExplicitJoinEntity { get; set; }     // هل الجدول الوسيط معرف بكلاس
+    /// <summary>
+    /// The action to perform on delete (e.g., CASCADE, SET NULL, NO ACTION).
+    /// </summary>
+    public ReferentialAction OnDelete { get; set; } = ReferentialAction.NoAction;
 }
 
 public enum RelationshipType

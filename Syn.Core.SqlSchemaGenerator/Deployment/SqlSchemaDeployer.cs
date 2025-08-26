@@ -18,9 +18,9 @@ namespace Syn.Core.SqlSchemaGenerator.Deployment
         /// <summary>
         /// Initializes a new instance of the SqlSchemaDeployer.
         /// </summary>
-        public SqlSchemaDeployer(ILogger<SqlSchemaDeployer> logger)
+        public SqlSchemaDeployer(ILogger<SqlSchemaDeployer> logger, DatabaseSchemaReader schemaReader)
         {
-            _executor = new SqlSchemaExecutor();
+            _executor = new SqlSchemaExecutor(schemaReader);
             var loggerFactory = LoggerFactory.Create(builder => { });
             var __logger = loggerFactory.CreateLogger<SqlScriptRunner>();
             _runner = new SqlScriptRunner(__logger);

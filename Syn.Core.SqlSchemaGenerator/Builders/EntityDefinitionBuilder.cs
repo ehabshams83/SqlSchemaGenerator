@@ -111,6 +111,9 @@ public partial class EntityDefinitionBuilder
     /// <returns>A fully populated <see cref="EntityDefinition"/> instance.</returns>
     public EntityDefinition Build(Type entityType)
     {
+        if (entityType == null)
+            throw new ArgumentNullException(nameof(entityType));
+
         var (schema, table) = entityType.GetTableInfo();
 
         var entity = new EntityDefinition
@@ -120,15 +123,20 @@ public partial class EntityDefinitionBuilder
             ClrType = entityType
         };
 
-        // Optional: Table-level description from attribute (if any)
+        // 📋 Table-level description
         var tableDescAttr = entityType.GetCustomAttribute<DescriptionAttribute>();
         if (tableDescAttr != null && !string.IsNullOrWhiteSpace(tableDescAttr.Text))
             entity.Description = tableDescAttr.Text;
 
+        // 🧩 Columns & property analysis
         foreach (var prop in entityType
-    .GetProperties(BindingFlags.Public | BindingFlags.Instance)
-    .Where(p => p.GetCustomAttribute<NotMappedAttribute>() == null))
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(p => p.GetCustomAttribute<NotMappedAttribute>() == null))
         {
+            // 🛡 فلترة الملاحة
+            if (IsCollectionOfEntity(prop) || IsReferenceToEntity(prop))
+                continue;
+
             var columnName = GetColumnName(prop);
             var isNullable = IsNullable(prop);
             var maxLength = GetMaxLength(prop);
@@ -143,78 +151,119 @@ public partial class EntityDefinitionBuilder
                 DefaultValue = defaultValue
             };
 
-            // Apply registered handlers to enrich column model
             foreach (var handler in _handlers)
-            {
                 handler.Apply(prop, columnModel);
-            }
 
-            if (columnModel.IsIgnored)
-                continue;
+            if (columnModel.IsIgnored) continue;
 
-            // Column definition
             var columnDef = ToColumnDefinition(columnModel);
 
-            // ✅ إضافة فحص الـ Identity الموحّد
-            columnDef.IsIdentity = prop.HasIdentityAttribute();
+            // الأولوية هنا لـ Attribute كإضافة فقط
+            if (prop.HasIdentityAttribute())
+                columnDef.IsIdentity = true;
 
-
-            // Optional: Column description from attribute (if any)
             var colDescAttr = prop.GetCustomAttribute<DescriptionAttribute>();
             if (colDescAttr != null && !string.IsNullOrWhiteSpace(colDescAttr.Text))
                 columnDef.Description = colDescAttr.Text;
 
             entity.Columns.Add(columnDef);
 
-            // Computed column
+            // Computed columns
             if (!string.IsNullOrWhiteSpace(columnModel.ComputedExpression))
             {
-                var computed = new ComputedColumnDefinition
+                entity.ComputedColumns.Add(new ComputedColumnDefinition
                 {
                     Name = columnName,
                     Expression = columnModel.ComputedExpression
-                };
-                entity.ComputedColumns.Add(computed);
+                });
             }
 
-            // Check constraints
+            // CHECK constraints from column model
             var checks = ToCheckConstraints(columnModel, entity.Name);
             entity.CheckConstraints.AddRange(checks);
 
-            // Indexes
+            // Indexes from column model
             var indexes = ToIndexes(columnModel, entity.Name);
             entity.Indexes.AddRange(indexes);
         }
 
-        // Primary key
+        // 🎯 Primary key أولاً
         entity.PrimaryKey = GetPrimaryKey(entityType);
+
+        // 🆕 لو فيه PK من غير اسم → توليد اسم افتراضي
+        if (entity.PrimaryKey != null && string.IsNullOrWhiteSpace(entity.PrimaryKey.Name))
+        {
+            entity.PrimaryKey.Name = $"PK_{entity.Name}";
+        }
+
+        // 🆕 أولوية الـ PK override
+        ApplyPrimaryKeyOverrides(entity);
+
+
 
         // Unique constraints
         entity.UniqueConstraints = GetUniqueConstraints(entityType);
 
-        // Foreign keys (enrich ConstraintName if missing)
+        // Explicit foreign keys
         entity.ForeignKeys = entityType.GetForeignKeys();
         foreach (var fk in entity.ForeignKeys)
         {
             if (string.IsNullOrWhiteSpace(fk.ConstraintName))
                 fk.ConstraintName = $"FK_{entity.Name}_{fk.Column}";
         }
-        // 🔹 استنتاج العلاقات من الـ Navigation Properties
+
+        // علاقات من الـ Navigation Properties
         InferForeignKeysFromNavigation(entityType, entity);
 
+        // One-to-One relationships
+        InferOneToOneRelationships(entityType, entity, new List<EntityDefinition> { entity });
+
+        // CHECK constraints from Attributes
+        InferCheckConstraints(entityType, entity);
+
+        // Validate FKs
         ValidateForeignKeys(entity);
 
         // Class-level indexes
         var classLevelIndexes = GetIndexes(entityType);
         entity.Indexes.AddRange(classLevelIndexes);
 
-        // Deduplicate indexes by name
+        // إزالة الفهارس المكررة
         entity.Indexes = entity.Indexes
             .GroupBy(ix => ix.Name)
             .Select(g => g.First())
             .ToList();
 
+        // Trace
+        Console.WriteLine($"[TRACE] Built entity: {entity.Name}");
+        Console.WriteLine("  Columns:");
+        foreach (var col in entity.Columns)
+            Console.WriteLine($"    🧩 {col.Name} ({col.TypeName}) Nullable={col.IsNullable}");
+
+        Console.WriteLine("  Relationships:");
+        foreach (var rel in entity.Relationships)
+            Console.WriteLine($"    🔗 {rel.SourceEntity} {rel.Type} -> {rel.TargetEntity} (Cascade={rel.OnDelete})");
+
+        Console.WriteLine("  CheckConstraints:");
+        foreach (var ck in entity.CheckConstraints)
+            Console.WriteLine($"    ✅ {ck.Name}: {ck.Expression}");
+
         return entity;
+    }
+    // Helper methods
+    private bool IsCollectionOfEntity(PropertyInfo prop)
+    {
+        if (prop.PropertyType == typeof(string)) return false;
+        if (!typeof(System.Collections.IEnumerable).IsAssignableFrom(prop.PropertyType)) return false;
+        if (!prop.PropertyType.IsGenericType) return false;
+        var arg = prop.PropertyType.GetGenericArguments()[0];
+        return arg.IsClass && !arg.Namespace.StartsWith("System", StringComparison.Ordinal);
+    }
+
+    private bool IsReferenceToEntity(PropertyInfo prop)
+    {
+        var t = prop.PropertyType;
+        return t != typeof(string) && t.IsClass && !t.Namespace.StartsWith("System", StringComparison.Ordinal);
     }
     /// <summary>
     /// Builds multiple <see cref="EntityDefinition"/> instances from the provided CLR types.
@@ -245,36 +294,73 @@ public partial class EntityDefinitionBuilder
     }
 
     /// <summary>
-    /// Builds all entity definitions from the given CLR types,
-    /// and infers navigation-based relationships (One-to-Many, Many-to-Many, One-to-One).
+    /// Builds all entity definitions from the provided CLR types and enriches them with inferred relationships and constraints.
+    /// Includes foreign keys, collection relationships, one-to-one relationships, and check constraints.
     /// </summary>
-    /// <param name="entityTypes">The CLR types to build from.</param>
-    /// <returns>
-    /// A list of enriched <see cref="EntityDefinition"/> objects.
-    /// </returns>
+    /// <param name="entityTypes">The CLR types representing entities.</param>
+    /// <returns>A list of enriched EntityDefinition objects.</returns>
+    /// <summary>
+    /// Builds all entity definitions from the provided CLR types and enriches them
+    /// with inferred relationships and constraints in two passes to ensure complete metadata.
+    /// </summary>
+    /// <param name="entityTypes">The CLR types representing entities.</param>
+    /// <returns>A list of enriched EntityDefinition objects.</returns>
     public List<EntityDefinition> BuildAllWithRelationships(IEnumerable<Type> entityTypes)
     {
+        if (entityTypes == null) throw new ArgumentNullException(nameof(entityTypes));
+
+        Console.WriteLine("===== [TRACE] Pass 1: Building basic entities =====");
+
+        // 🥇 Pass 1: بناء الكيانات وتجميع البيانات الأساسية فقط
         var allEntities = entityTypes
             .Where(t => t.IsClass && t.IsPublic && !t.IsAbstract)
             .Select(t =>
             {
-                var entity = Build(t);
+                var entity = Build(t); // بناء أولي
                 entity.ClrType = t;
+
+                Console.WriteLine($"[TRACE] Built entity: {entity.Name}");
+                Console.WriteLine("  Columns:");
+                foreach (var col in entity.Columns)
+                    Console.WriteLine($"    🧩 {col.Name} ({col.TypeName}) Nullable={col.IsNullable}");
+                Console.WriteLine($"  Relationships: {entity.Relationships.Count}");
+                Console.WriteLine($"  CheckConstraints: {entity.CheckConstraints.Count}");
+
                 return entity;
             })
             .ToList();
-        List<EntityDefinition> result = [];
-        result.AddRange(allEntities);
 
-        foreach (var entity in result)
+        // 🥈 Pass 2: نسخة Snapshot آمنة
+        var entityListSnapshot = allEntities.ToList();
+
+        Console.WriteLine();
+        Console.WriteLine("===== [TRACE] Pass 2: Inferring relationships and constraints =====");
+
+        foreach (var entity in entityListSnapshot)
         {
+            Console.WriteLine($"[TRACE] Analyzing {entity.Name}...");
+
+            // 🔹 Foreign Keys من الـ Navigation
             InferForeignKeysFromNavigation(entity.ClrType, entity);
+
+            // 🔹 علاقات One-to-Many و Many-to-Many
             InferCollectionRelationships(entity.ClrType, entity, allEntities);
+
+            // 🔹 علاقات One-to-One مع تتبّع
+            Console.WriteLine($"  -> Before OneToOne: {entity.Relationships.Count} relationships");
             InferOneToOneRelationships(entity.ClrType, entity, allEntities);
+            Console.WriteLine($"  -> After OneToOne: {entity.Relationships.Count} relationships");
+
+            // 🔹 قيود CHECK مع تتبّع
+            Console.WriteLine($"  -> Before CHECK: {entity.CheckConstraints.Count} constraints");
+            InferCheckConstraints(entity.ClrType, entity);
+            Console.WriteLine($"  -> After CHECK: {entity.CheckConstraints.Count} constraints");
         }
 
         return allEntities;
     }
+
+
 
     /// <summary>
     /// Builds multiple <see cref="EntityDefinition"/> instances by scanning all public
@@ -706,20 +792,85 @@ public partial class EntityDefinitionBuilder
     /// </summary>
     private static PrimaryKeyDefinition? GetPrimaryKey(Type type)
     {
+        // 1️⃣ البحث عن أي [Key] Attributes أولاً
         var pkColumns = type
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Where(p => p.GetCustomAttribute<KeyAttribute>() != null)
             .Select(p => p.Name)
             .ToList();
 
+        // 2️⃣ لو مفيش [Key]، نستنتج من الأسماء الشائعة
+        if (pkColumns.Count == 0)
+        {
+            string typeNameId = type.Name + "Id";
+
+            pkColumns = type
+                .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Where(p =>
+                    p.Name.Equals("Id", StringComparison.OrdinalIgnoreCase) ||
+                    p.Name.Equals(typeNameId, StringComparison.OrdinalIgnoreCase))
+                .Select(p => p.Name)
+                .ToList();
+        }
+
+        // 3️⃣ لو لسه مفيش PK، نحاول نستنتج PK مركب للجداول الوسيطة
+        if (pkColumns.Count == 0)
+        {
+            var allProps = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                               .Where(p => p.GetCustomAttribute<NotMappedAttribute>() == null)
+                               .ToList();
+
+            // أي أعمدة منتهية بـ "Id" تعتبر مرشحة
+            var idCols = allProps
+                .Where(p => p.Name.EndsWith("Id", StringComparison.OrdinalIgnoreCase))
+                .Select(p => p.Name)
+                .ToList();
+
+            // لو فيه عمودين أو أكتر → نعتبرهم PK مركب
+            if (idCols.Count >= 2)
+            {
+                return new PrimaryKeyDefinition
+                {
+                    Columns = idCols,
+                    IsAutoGenerated = false,  // PK مركب، مفيش Identity
+                    Name = $"PK_{type.Name}"
+                };
+            }
+        }
+
+        // 4️⃣ لو لسه مفيش حاجة
         if (pkColumns.Count == 0)
             return null;
 
+        // 5️⃣ مفتاح مفرد (مع اسم افتراضي لو مش موجود)
         return new PrimaryKeyDefinition
         {
             Columns = pkColumns,
-            IsAutoGenerated = true
+            IsAutoGenerated = true,
+            Name = $"PK_{type.Name}"
         };
+    }
+    internal static void ApplyPrimaryKeyOverrides(EntityDefinition entity)
+    {
+        if (entity.PrimaryKey?.Columns != null && entity.PrimaryKey.Columns.Any())
+        {
+            bool isComposite = entity.PrimaryKey.Columns.Count > 1;
+
+            foreach (var pkName in entity.PrimaryKey.Columns)
+            {
+                var pkCol = entity.Columns.FirstOrDefault(c =>
+                    c.Name.Equals(pkName, StringComparison.OrdinalIgnoreCase));
+
+                if (pkCol != null)
+                {
+                    pkCol.IsNullable = false;
+
+                    // Identity فقط لو PK مفرد وأوتوماتيكي
+                    if (!isComposite && entity.PrimaryKey.IsAutoGenerated)
+                        pkCol.IsIdentity = true;
+                }
+            }
+        }
     }
 
 

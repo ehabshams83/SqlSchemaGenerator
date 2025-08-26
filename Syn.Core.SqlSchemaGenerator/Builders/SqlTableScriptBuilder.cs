@@ -44,7 +44,10 @@ namespace Syn.Core.SqlSchemaGenerator.Builders
             var sb = new StringBuilder();
             sb.AppendLine($"CREATE TABLE [{schema}].[{entity.Name}] (");
 
-            var columnLines = entity.Columns.Select(BuildColumnDefinition).ToList();
+            var columnLines = entity.Columns
+                .Select(BuildColumnDefinition)
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .ToList();
 
             if (entity.PrimaryKey != null && entity.PrimaryKey.Columns.Any())
             {
@@ -56,17 +59,39 @@ namespace Syn.Core.SqlSchemaGenerator.Builders
             sb.AppendLine(");");
 
             return sb.ToString();
+
+
         }
 
+        /// <summary>
+        /// Builds SQL column definition from a <see cref="ColumnDefinition"/>.
+        /// Skips navigation properties and ensures correct formatting.
+        /// </summary>
         private string BuildColumnDefinition(ColumnDefinition col)
         {
+            // ⛔️ تجاهل الأعمدة التنقلية (Navigation Properties)
+            if (col.TypeName == "nvarchar(max)" && col.Name != "Id" && !col.Name.EndsWith("Id"))
+                return null;
+
             var sb = new StringBuilder();
             sb.Append($"[{col.Name}] {col.TypeName}");
+
             if (!col.IsNullable) sb.Append(" NOT NULL");
             if (col.IsIdentity) sb.Append(" IDENTITY(1,1)");
             if (col.DefaultValue != null) sb.Append($" DEFAULT {FormatDefaultValue(col.DefaultValue)}");
+
             return sb.ToString();
         }
+
+        //private string BuildColumnDefinition(ColumnDefinition col)
+        //{
+        //    var sb = new StringBuilder();
+        //    sb.Append($"[{col.Name}] {col.TypeName}");
+        //    if (!col.IsNullable) sb.Append(" NOT NULL");
+        //    if (col.IsIdentity) sb.Append(" IDENTITY(1,1)");
+        //    if (col.DefaultValue != null) sb.Append($" DEFAULT {FormatDefaultValue(col.DefaultValue)}");
+        //    return sb.ToString();
+        //}
 
         private string FormatDefaultValue(object value) =>
             value switch
