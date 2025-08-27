@@ -72,6 +72,7 @@ namespace Syn.Core.SqlSchemaGenerator.Builders
         public string BuildCreate(EntityDefinition entity)
         {
             if (entity == null) throw new ArgumentNullException(nameof(entity));
+
             Console.WriteLine($"[TRACE] In BuildCreate for: {entity.Name}");
             Console.WriteLine($"  Relationships: {entity.Relationships.Count}");
             foreach (var rel in entity.Relationships)
@@ -80,6 +81,11 @@ namespace Syn.Core.SqlSchemaGenerator.Builders
             Console.WriteLine($"  CheckConstraints: {entity.CheckConstraints.Count}");
             foreach (var ck in entity.CheckConstraints)
                 Console.WriteLine($"    ✅ {ck.Name}: {ck.Expression}");
+
+            // 🔍 تتبع الأعمدة قبل توليد SQL
+            Console.WriteLine($"  Columns:");
+            foreach (var col in entity.Columns)
+                Console.WriteLine($"    🧩 {col.Name} ({col.TypeName}) Nullable={col.IsNullable} Identity={col.IsIdentity}");
 
             var schema = string.IsNullOrWhiteSpace(entity.Schema) ? "dbo" : entity.Schema;
             var sb = new StringBuilder();
@@ -217,6 +223,8 @@ REFERENCES [{schema}].[{fk.ReferencedTable}]([{referencedColumn}]){cascadeClause
 
             return sb.ToString().Trim();
         }
+        
+        
         //        /// <summary>
         //        /// Builds SQL ALTER TABLE statements to create all constraints for an entity.
         //        /// Includes CHECK, FOREIGN KEY, and UNIQUE constraints, with optional extended descriptions.

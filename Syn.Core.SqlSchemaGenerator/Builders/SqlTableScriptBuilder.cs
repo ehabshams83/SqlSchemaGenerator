@@ -59,8 +59,6 @@ namespace Syn.Core.SqlSchemaGenerator.Builders
             sb.AppendLine(");");
 
             return sb.ToString();
-
-
         }
 
         /// <summary>
@@ -72,6 +70,9 @@ namespace Syn.Core.SqlSchemaGenerator.Builders
             // ⛔️ تجاهل الأعمدة التنقلية (Navigation Properties)
             if (col.TypeName == "nvarchar(max)" && col.Name != "Id" && !col.Name.EndsWith("Id"))
                 return null;
+
+            // 🔍 تتبع قبل توليد التعريف
+            Console.WriteLine($"[TRACE:ColumnDef] Building column: {col.Name} → Type={col.TypeName}, Nullable={col.IsNullable}, Identity={col.IsIdentity}");
 
             var sb = new StringBuilder();
             sb.Append($"[{col.Name}] {col.TypeName}");

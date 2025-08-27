@@ -166,6 +166,9 @@ public partial class EntityDefinitionBuilder
             if (colDescAttr != null && !string.IsNullOrWhiteSpace(colDescAttr.Text))
                 columnDef.Description = colDescAttr.Text;
 
+            // 🔍 تتبع قبل إضافة العمود
+            Console.WriteLine($"[TRACE:ColumnInit] {entity.Name}.{columnDef.Name} → Identity={columnDef.IsIdentity}, Nullable={columnDef.IsNullable}, Type={columnDef.TypeName}");
+
             entity.Columns.Add(columnDef);
 
             // Computed columns
@@ -199,7 +202,11 @@ public partial class EntityDefinitionBuilder
         // 🆕 أولوية الـ PK override
         ApplyPrimaryKeyOverrides(entity);
 
-
+        // 🔍 تتبع بعد تطبيق الـ override
+        foreach (var col in entity.Columns)
+        {
+            Console.WriteLine($"[TRACE:ColumnPostOverride] {entity.Name}.{col.Name} → Identity={col.IsIdentity}, Nullable={col.IsNullable}");
+        }
 
         // Unique constraints
         entity.UniqueConstraints = GetUniqueConstraints(entityType);
@@ -238,7 +245,7 @@ public partial class EntityDefinitionBuilder
         Console.WriteLine($"[TRACE] Built entity: {entity.Name}");
         Console.WriteLine("  Columns:");
         foreach (var col in entity.Columns)
-            Console.WriteLine($"    🧩 {col.Name} ({col.TypeName}) Nullable={col.IsNullable}");
+            Console.WriteLine($"    🧩 {col.Name} ({col.TypeName}) Nullable={col.IsNullable} Identity={col.IsIdentity}");
 
         Console.WriteLine("  Relationships:");
         foreach (var rel in entity.Relationships)
@@ -249,8 +256,7 @@ public partial class EntityDefinitionBuilder
             Console.WriteLine($"    ✅ {ck.Name}: {ck.Expression}");
 
         return entity;
-    }
-    // Helper methods
+    }    // Helper methods
     private bool IsCollectionOfEntity(PropertyInfo prop)
     {
         if (prop.PropertyType == typeof(string)) return false;
@@ -311,6 +317,12 @@ public partial class EntityDefinitionBuilder
 
         Console.WriteLine("===== [TRACE] Pass 1: Building basic entities =====");
 
+        // 🧠 تتبع الكيانات اللي داخلة فعليًا
+        foreach (var type in entityTypes)
+        {
+            Console.WriteLine($"[TRACE:Build] Including type: {type.Name}");
+        }
+
         // 🥇 Pass 1: بناء الكيانات وتجميع البيانات الأساسية فقط
         var allEntities = entityTypes
             .Where(t => t.IsClass && t.IsPublic && !t.IsAbstract)
@@ -322,7 +334,7 @@ public partial class EntityDefinitionBuilder
                 Console.WriteLine($"[TRACE] Built entity: {entity.Name}");
                 Console.WriteLine("  Columns:");
                 foreach (var col in entity.Columns)
-                    Console.WriteLine($"    🧩 {col.Name} ({col.TypeName}) Nullable={col.IsNullable}");
+                    Console.WriteLine($"    🧩 {col.Name} ({col.TypeName}) Nullable={col.IsNullable} Identity={col.IsIdentity}");
                 Console.WriteLine($"  Relationships: {entity.Relationships.Count}");
                 Console.WriteLine($"  CheckConstraints: {entity.CheckConstraints.Count}");
 
@@ -359,7 +371,6 @@ public partial class EntityDefinitionBuilder
 
         return allEntities;
     }
-
 
 
     /// <summary>
@@ -708,7 +719,7 @@ public partial class EntityDefinitionBuilder
             IsIgnored = model.IsIgnored,
             DefaultValue = model.DefaultValue,
             Collation = model.Collation,
-            Description = model.Description
+            Description = model.Description,
         };
     }
 
@@ -792,63 +803,77 @@ public partial class EntityDefinitionBuilder
     /// </summary>
     private static PrimaryKeyDefinition? GetPrimaryKey(Type type)
     {
-        // 1️⃣ البحث عن أي [Key] Attributes أولاً
+        // 1️⃣ البحث عن [Key] Attributes
         var pkColumns = type
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Where(p => p.GetCustomAttribute<KeyAttribute>() != null)
             .Select(p => p.Name)
             .ToList();
 
-        // 2️⃣ لو مفيش [Key]، نستنتج من الأسماء الشائعة
-        if (pkColumns.Count == 0)
+        if (pkColumns.Count > 0)
         {
-            string typeNameId = type.Name + "Id";
+            Console.WriteLine($"[TRACE:PK] Final PK for {type.Name} (via [Key]): {string.Join(", ", pkColumns)}");
 
-            pkColumns = type
-                .GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Where(p =>
-                    p.Name.Equals("Id", StringComparison.OrdinalIgnoreCase) ||
-                    p.Name.Equals(typeNameId, StringComparison.OrdinalIgnoreCase))
-                .Select(p => p.Name)
-                .ToList();
-        }
-
-        // 3️⃣ لو لسه مفيش PK، نحاول نستنتج PK مركب للجداول الوسيطة
-        if (pkColumns.Count == 0)
-        {
-            var allProps = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                               .Where(p => p.GetCustomAttribute<NotMappedAttribute>() == null)
-                               .ToList();
-
-            // أي أعمدة منتهية بـ "Id" تعتبر مرشحة
-            var idCols = allProps
-                .Where(p => p.Name.EndsWith("Id", StringComparison.OrdinalIgnoreCase))
-                .Select(p => p.Name)
-                .ToList();
-
-            // لو فيه عمودين أو أكتر → نعتبرهم PK مركب
-            if (idCols.Count >= 2)
+            return new PrimaryKeyDefinition
             {
-                return new PrimaryKeyDefinition
-                {
-                    Columns = idCols,
-                    IsAutoGenerated = false,  // PK مركب، مفيش Identity
-                    Name = $"PK_{type.Name}"
-                };
-            }
+                Columns = pkColumns,
+                IsAutoGenerated = true,
+                Name = $"PK_{type.Name}"
+            };
         }
 
-        // 4️⃣ لو لسه مفيش حاجة
-        if (pkColumns.Count == 0)
-            return null;
+        // 2️⃣ fallback للأسماء الشائعة
+        string typeNameId = type.Name + "Id";
 
-        // 5️⃣ مفتاح مفرد (مع اسم افتراضي لو مش موجود)
-        return new PrimaryKeyDefinition
+        pkColumns = type
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(p =>
+                p.Name.Equals("Id", StringComparison.OrdinalIgnoreCase) ||
+                p.Name.Equals(typeNameId, StringComparison.OrdinalIgnoreCase))
+            .Select(p => p.Name)
+            .ToList();
+
+        if (pkColumns.Count > 0)
         {
-            Columns = pkColumns,
-            IsAutoGenerated = true,
-            Name = $"PK_{type.Name}"
-        };
+            Console.WriteLine($"[TRACE:PK] Final PK for {type.Name} (via naming): {string.Join(", ", pkColumns)}");
+
+            return new PrimaryKeyDefinition
+            {
+                Columns = pkColumns,
+                IsAutoGenerated = true,
+                Name = $"PK_{type.Name}"
+            };
+        }
+
+        // 3️⃣ استنتاج PK مركب للجداول الوسيطة
+        var allProps = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                           .Where(p => p.GetCustomAttribute<NotMappedAttribute>() == null)
+                           .ToList();
+
+        Console.WriteLine($"[TRACE:PK] Columns in {type.Name}: {string.Join(", ", allProps.Select(p => p.Name))}");
+
+        var idCols = allProps
+            .Where(p => p.Name.EndsWith("Id", StringComparison.OrdinalIgnoreCase))
+            .Select(p => p.Name)
+            .ToList();
+
+        Console.WriteLine($"[TRACE:PK] Id-like columns in {type.Name}: {string.Join(", ", idCols)}");
+
+        if (idCols.Count >= 2)
+        {
+            Console.WriteLine($"[TRACE:PK] Composite PK inferred for {type.Name}: {string.Join(", ", idCols)}");
+
+            return new PrimaryKeyDefinition
+            {
+                Columns = idCols,
+                IsAutoGenerated = false,
+                Name = $"PK_{type.Name}"
+            };
+        }
+
+        // 4️⃣ لو مفيش حاجة
+        Console.WriteLine($"[TRACE:PK] No PK found for {type.Name}");
+        return null;
     }
     internal static void ApplyPrimaryKeyOverrides(EntityDefinition entity)
     {
@@ -865,15 +890,13 @@ public partial class EntityDefinitionBuilder
                 {
                     pkCol.IsNullable = false;
 
-                    // Identity فقط لو PK مفرد وأوتوماتيكي
-                    if (!isComposite && entity.PrimaryKey.IsAutoGenerated)
-                        pkCol.IsIdentity = true;
+                    pkCol.IsIdentity = !isComposite && entity.PrimaryKey.IsAutoGenerated;
+
+                    Console.WriteLine($"[TRACE:PK] ApplyOverride → {entity.Name}.{pkCol.Name}: Identity={pkCol.IsIdentity}, Composite={isComposite}, Auto={entity.PrimaryKey.IsAutoGenerated}");
                 }
             }
         }
     }
-
-
     /// <summary>
     /// Extracts unique constraints from [Unique] and [Index(IsUnique = true)] attributes.
     /// Supports both property-level and class-level Index definitions.
