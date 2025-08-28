@@ -3,6 +3,7 @@
     /// <summary>
     /// Marks the column as having a UNIQUE constraint.
     /// </summary>
+    [Obsolete("Not supported any more", true)]
     [AttributeUsage(AttributeTargets.Property)]
     public class UniqueAttribute : Attribute
     {

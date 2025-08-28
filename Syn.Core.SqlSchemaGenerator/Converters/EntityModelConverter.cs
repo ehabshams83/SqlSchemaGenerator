@@ -36,7 +36,7 @@ public static class EntityModelConverter
                 {
                     Name = i.Name,
                     IsUnique = i.IsUnique,
-                    Columns = i.Columns,
+                    IncludeColumns = i.Columns,
                     Description = i.Description
                 }).ToList(),
                 CheckConstraints = c.CheckConstraints.Select(cc => new CheckConstraintModel
@@ -72,7 +72,7 @@ public static class EntityModelConverter
             {
                 Name = i.Name,
                 IsUnique = i.IsUnique,
-                Columns = i.Columns,
+                IncludeColumns = i.Columns,
                 Description = i.Description
             }).ToList(),
 

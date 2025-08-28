@@ -29,4 +29,9 @@ public class IndexDefinition
     /// Optional description of the index, used for documentation or extended properties.
     /// </summary>
     public string? Description { get; set; }
+
+    // توسعة جديدة
+    public bool IsFullText { get; set; }
+    public List<string>? IncludeColumns { get; set; }
+
 }

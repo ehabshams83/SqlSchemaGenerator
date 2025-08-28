@@ -1,6 +1,8 @@
 ﻿using System.Reflection;
+
+using Microsoft.EntityFrameworkCore;
+
 using Syn.Core.SqlSchemaGenerator.Models;
-using Syn.Core.SqlSchemaGenerator.Attributes;
 
 namespace Syn.Core.SqlSchemaGenerator.AttributeHandlers;
 
@@ -22,7 +24,7 @@ public class IndexAttributeHandler : ISchemaAttributeHandler
             {
                 Name = attr.Name,
                 IsUnique = attr.IsUnique,
-                Columns = attr.Columns?.ToList() ?? new List<string>()
+                IncludeColumns = attr.PropertyNames?.ToList() ?? new List<string>()
             };
 
             column.Indexes.Add(index);

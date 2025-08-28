@@ -2,7 +2,7 @@
 {
     /// <summary>
     /// Represents a physical check constraint used in SQL generation.
-    /// Includes name, expression, and optional description.
+    /// Includes name, expression, optional description, and referenced columns for indexing.
     /// </summary>
     public class CheckConstraintDefinition
     {
@@ -20,5 +20,11 @@
         /// Optional description of the constraint, used for documentation or extended properties.
         /// </summary>
         public string? Description { get; set; }
+
+        /// <summary>
+        /// List of column names referenced in the expression.
+        /// Used to generate supporting indexes or statistics.
+        /// </summary>
+        public List<string> ReferencedColumns { get; set; } = new();
     }
 }

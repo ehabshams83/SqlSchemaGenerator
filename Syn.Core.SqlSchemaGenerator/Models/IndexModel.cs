@@ -19,10 +19,16 @@ public class IndexModel
     /// <summary>
     /// The list of column names included in the index.
     /// </summary>
-    public List<string> Columns { get; set; } = new();
+    public List<string> IncludeColumns { get; set; } = new();
 
     /// <summary>
     /// Optional description of the index, used for documentation or extended properties.
     /// </summary>
     public string? Description { get; set; }
+    // توسعة جديدة
+    public bool IsFullText { get; set; }
+    /// <summary>
+    /// Optional SQL filter expression applied to the index.
+    /// </summary>
+    public string? FilterExpression { get; set; }
 }

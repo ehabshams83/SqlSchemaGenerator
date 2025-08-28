@@ -3,6 +3,7 @@
 using System;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace Syn.Core.SqlSchemaGenerator.Builders
 {
@@ -47,22 +48,7 @@ namespace Syn.Core.SqlSchemaGenerator.Builders
 
 
 
-        /// <summary>
-        /// Builds SQL ALTER TABLE statements to create all constraints for an entity.
-        /// Includes CHECK, FOREIGN KEY, and UNIQUE constraints, with optional extended descriptions.
-        /// </summary>
-        /// <summary>
-        /// Builds SQL ALTER TABLE statements to create all constraints for an entity.
-        /// Includes CHECK, FOREIGN KEY, and UNIQUE constraints, with optional extended descriptions.
-        /// </summary>
-        /// <summary>
-        /// Builds SQL ALTER TABLE statements to create all constraints for an entity.
-        /// Includes CHECK, FOREIGN KEY, and UNIQUE constraints, with optional extended descriptions.
-        /// </summary>
-        /// <summary>
-        /// Builds SQL ALTER TABLE statements to create all constraints for an entity.
-        /// Includes CHECK, FOREIGN KEY, and UNIQUE constraints, with optional extended descriptions.
-        /// </summary>
+
         /// <summary>
         /// Builds SQL statements to create or update all constraints and indexes for an entity.
         /// Includes CHECK, FOREIGN KEY, UNIQUE, INDEX, and ALTER COLUMN logic with extended descriptions.
@@ -73,132 +59,87 @@ namespace Syn.Core.SqlSchemaGenerator.Builders
         {
             if (entity == null) throw new ArgumentNullException(nameof(entity));
 
-            Console.WriteLine($"[TRACE] In BuildCreate for: {entity.Name}");
-            Console.WriteLine($"  Relationships: {entity.Relationships.Count}");
-            foreach (var rel in entity.Relationships)
-                Console.WriteLine($"    🔗 {rel.SourceEntity} {rel.Type} -> {rel.TargetEntity}");
-
-            Console.WriteLine($"  CheckConstraints: {entity.CheckConstraints.Count}");
-            foreach (var ck in entity.CheckConstraints)
-                Console.WriteLine($"    ✅ {ck.Name}: {ck.Expression}");
-
-            // 🔍 تتبع الأعمدة قبل توليد SQL
-            Console.WriteLine($"  Columns:");
-            foreach (var col in entity.Columns)
-                Console.WriteLine($"    🧩 {col.Name} ({col.TypeName}) Nullable={col.IsNullable} Identity={col.IsIdentity}");
-
             var schema = string.IsNullOrWhiteSpace(entity.Schema) ? "dbo" : entity.Schema;
             var sb = new StringBuilder();
 
-            var oldEntity = schemaReader.GetEntityDefinition(schema, entity.Name);
+            Console.WriteLine($"[TRACE] In BuildCreate for: {entity.Name}");
 
-            // 🔧 ALTER COLUMN
-            if (oldEntity != null)
+            var columnLines = new List<string>();
+            var constraintLines = new List<string>();
+
+            foreach (var col in entity.Columns)
             {
-                foreach (var newCol in entity.Columns)
+                var type = col.TypeName;
+                var nullable = col.IsNullable ? "NULL" : "NOT NULL";
+                var identity = col.IsIdentity ? " IDENTITY(1,1)" : "";
+                columnLines.Add($"[{col.Name}] {type}{identity} {nullable}");
+
+                Console.WriteLine($"  🧩 Column: {col.Name} → {type}, Nullable={col.IsNullable}, Identity={col.IsIdentity}");
+            }
+
+            foreach (var ck in entity.CheckConstraints)
+            {
+                constraintLines.Add($"CONSTRAINT [{ck.Name}] CHECK ({ck.Expression})");
+                Console.WriteLine($"  ✅ Check: {ck.Name} → {ck.Expression}");
+
+                // 🔍 فهرس داعم لو التعبير فيه عمود واضح
+                var colName = ExtractColumnFromExpression(ck.Expression);
+                if (!string.IsNullOrWhiteSpace(colName))
                 {
-                    var oldCol = oldEntity.Columns.FirstOrDefault(c => c.Name.Equals(newCol.Name, StringComparison.OrdinalIgnoreCase));
-                    if (oldCol == null) continue;
-
-                    var typeChanged = !string.Equals(oldCol.TypeName, newCol.TypeName, StringComparison.OrdinalIgnoreCase);
-                    var nullabilityChanged = oldCol.IsNullable != newCol.IsNullable;
-
-                    if (typeChanged || nullabilityChanged)
+                    bool alreadyIndexed = entity.Indexes.Any(ix => ix.Columns.Contains(colName));
+                    if (!alreadyIndexed && entity.Columns.Any(c => c.Name == colName))
                     {
-                        var nullability = newCol.IsNullable ? "NULL" : "NOT NULL";
-                        sb.AppendLine($@"
--- 🔧 ALTER COLUMN: {newCol.Name}
-ALTER TABLE [{schema}].[{entity.Name}]
-ALTER COLUMN [{newCol.Name}] {newCol.TypeName} {nullability};");
+                        var ixName = $"IX_{entity.Name}_{colName}_ForCheck";
+                        entity.Indexes.Add(new IndexDefinition
+                        {
+                            Name = ixName,
+                            Columns = new List<string> { colName },
+                            IsUnique = false,
+                            Description = $"Auto index to support CHECK constraint {ck.Name}"
+                        });
+                        Console.WriteLine($"    📌 Auto-index added for CHECK: {ixName} on {colName}");
                     }
                 }
             }
 
-            // 🔹 CHECK constraints
-            foreach (var c in entity.CheckConstraints)
+            if (entity.PrimaryKey?.Columns?.Count > 0)
+            {
+                var pkCols = string.Join(", ", entity.PrimaryKey.Columns.Select(c => $"[{c}]"));
+                constraintLines.Add($"CONSTRAINT [{entity.PrimaryKey.Name}] PRIMARY KEY ({pkCols})");
+                Console.WriteLine($"  🔑 PrimaryKey: {entity.PrimaryKey.Name} → {pkCols}");
+            }
+
+            var allLines = columnLines.Concat(constraintLines).ToList();
+            var tableSql = $@"
+CREATE TABLE [{schema}].[{entity.Name}] (
+    {string.Join(",\n    ", allLines)}
+);";
+
+            sb.AppendLine(tableSql);
+
+            if (!string.IsNullOrWhiteSpace(entity.Description))
             {
                 sb.AppendLine($@"
-IF EXISTS (
-    SELECT 1 FROM sys.check_constraints cc
-    WHERE cc.name = N'{c.Name}'
-      AND cc.parent_object_id = OBJECT_ID(N'[{schema}].[{entity.Name}]')
-)
-BEGIN
-    ALTER TABLE [{schema}].[{entity.Name}]
-    DROP CONSTRAINT [{c.Name}];
-END;
-
-ALTER TABLE [{schema}].[{entity.Name}]
-ADD CONSTRAINT [{c.Name}] CHECK ({c.Expression});");
-
-                if (!string.IsNullOrWhiteSpace(c.Description))
-                {
-                    sb.AppendLine($@"
 EXEC sys.sp_addextendedproperty 
     @name = N'MS_Description',
-    @value = N'{c.Description}',
-    @level0type = N'SCHEMA',    @level0name = N'{schema}',
-    @level1type = N'TABLE',     @level1name = N'{entity.Name}',
-    @level2type = N'CONSTRAINT',@level2name = N'{c.Name}';");
-                }
+    @value = N'{entity.Description}',
+    @level0type = N'SCHEMA', @level0name = N'{schema}',
+    @level1type = N'TABLE',  @level1name = N'{entity.Name}';");
             }
 
-            // 🔹 Relationships
-            foreach (var rel in entity.Relationships.Where(r => r.Type == RelationshipType.OneToOne))
+            foreach (var col in entity.Columns.Where(c => !string.IsNullOrWhiteSpace(c.Description)))
             {
-                var colName = entity.Columns
-                    .FirstOrDefault(c =>
-                        c.Name.Equals($"{rel.TargetEntity}Id", StringComparison.OrdinalIgnoreCase) ||
-                        c.Name.Equals($"{rel.SourceEntity}Id", StringComparison.OrdinalIgnoreCase))?.Name;
-
-                if (string.IsNullOrWhiteSpace(colName)) continue;
-
-                var fkName = $"FK_{entity.Name}_{colName}";
-                var uqName = $"UQ_{entity.Name}_{colName}";
-                var ixName = $"IX_{entity.Name}_{colName}";
-                var cascadeClause = rel.OnDelete == ReferentialAction.Cascade ? " ON DELETE CASCADE" : "";
-
                 sb.AppendLine($@"
-IF EXISTS (
-    SELECT 1 FROM sys.foreign_keys WHERE name = N'{fkName}'
-      AND parent_object_id = OBJECT_ID(N'[{schema}].[{entity.Name}]')
-)
-BEGIN
-    ALTER TABLE [{schema}].[{entity.Name}]
-    DROP CONSTRAINT [{fkName}];
-END;
-
-ALTER TABLE [{schema}].[{entity.Name}]
-ADD CONSTRAINT [{fkName}]
-FOREIGN KEY ([{colName}])
-REFERENCES [{schema}].[{rel.TargetEntity}]([Id]){cascadeClause};
-
-IF EXISTS (
-    SELECT 1 FROM sys.indexes WHERE name = N'{uqName}'
-      AND object_id = OBJECT_ID(N'[{schema}].[{entity.Name}]')
-)
-BEGIN
-    ALTER TABLE [{schema}].[{entity.Name}]
-    DROP CONSTRAINT [{uqName}];
-END;
-
-ALTER TABLE [{schema}].[{entity.Name}]
-ADD CONSTRAINT [{uqName}]
-UNIQUE ([{colName}]);
-
-IF EXISTS (
-    SELECT 1 FROM sys.indexes WHERE name = N'{ixName}'
-      AND object_id = OBJECT_ID(N'[{schema}].[{entity.Name}]')
-)
-BEGIN
-    DROP INDEX [{ixName}] ON [{schema}].[{entity.Name}];
-END;
-
-CREATE INDEX [{ixName}]
-ON [{schema}].[{entity.Name}]([{colName}]);");
+EXEC sys.sp_addextendedproperty 
+    @name = N'MS_Description',
+    @value = N'{col.Description}',
+    @level0type = N'SCHEMA', @level0name = N'{schema}',
+    @level1type = N'TABLE',  @level1name = N'{entity.Name}',
+    @level2type = N'COLUMN', @level2name = N'{col.Name}';");
             }
 
-            // 🔹 Explicit ForeignKeys
+            // تابع في الجزء الثاني...
+            // ✅ توليد العلاقات (FOREIGN KEY)
             foreach (var fk in entity.ForeignKeys)
             {
                 var fkName = fk.ConstraintName;
@@ -219,13 +160,140 @@ ALTER TABLE [{schema}].[{entity.Name}]
 ADD CONSTRAINT [{fkName}]
 FOREIGN KEY ([{fk.Column}])
 REFERENCES [{schema}].[{fk.ReferencedTable}]([{referencedColumn}]){cascadeClause};");
+
+                Console.WriteLine($"[TRACE:FK] {fkName} → {fk.Column} → {fk.ReferencedTable}.{referencedColumn} Cascade={fk.OnDelete}");
+            }
+
+            // ✅ توليد الفهارس
+            foreach (var index in entity.Indexes.DistinctBy(i => i.Name))
+            {
+                var indexColumns = string.Join(", ", index.Columns.Select(c => $"[{c}]"));
+                var includeClause = index.IncludeColumns?.Count > 0
+                    ? $" INCLUDE ({string.Join(", ", index.IncludeColumns.Select(c => $"[{c}]"))})"
+                    : "";
+
+                var filterClause = !string.IsNullOrWhiteSpace(index.FilterExpression)
+                    ? $" WHERE {index.FilterExpression}"
+                    : "";
+
+                var traceParts = new List<string>
+        {
+            $"Name={index.Name}",
+            $"Unique={index.IsUnique}",
+            $"Columns=[{string.Join(", ", index.Columns)}]"
+        };
+
+                if (index.IncludeColumns?.Count > 0)
+                    traceParts.Add($"Include=[{string.Join(", ", index.IncludeColumns)}]");
+
+                if (!string.IsNullOrWhiteSpace(index.FilterExpression))
+                    traceParts.Add($"Filter=\"{index.FilterExpression}\"");
+
+                if (index.IsFullText)
+                    traceParts.Add("FullText=True");
+
+                Console.WriteLine($"[TRACE:Index] {string.Join(", ", traceParts)}");
+
+                if (index.IsFullText)
+                {
+                    sb.AppendLine($@"
+-- 🔍 FULLTEXT INDEX: {index.Name}
+CREATE FULLTEXT INDEX ON [{schema}].[{entity.Name}] ({indexColumns})
+KEY INDEX [PK_{entity.Name}]
+WITH STOPLIST = SYSTEM;");
+                    continue;
+                }
+
+                var uniqueClause = index.IsUnique ? "UNIQUE " : "";
+
+                sb.AppendLine($@"
+IF EXISTS (
+    SELECT 1 FROM sys.indexes WHERE name = N'{index.Name}'
+      AND object_id = OBJECT_ID(N'[{schema}].[{entity.Name}]')
+)
+BEGIN
+    DROP INDEX [{index.Name}] ON [{schema}].[{entity.Name}];
+END;
+
+CREATE {uniqueClause}INDEX [{index.Name}]
+ON [{schema}].[{entity.Name}]({indexColumns}){includeClause}{filterClause};");
+
+                if (!string.IsNullOrWhiteSpace(index.Description))
+                {
+                    sb.AppendLine($@"
+EXEC sys.sp_addextendedproperty 
+    @name = N'MS_Description',
+    @value = N'{index.Description}',
+    @level0type = N'SCHEMA',    @level0name = N'{schema}',
+    @level1type = N'TABLE',     @level1name = N'{entity.Name}',
+    @level2type = N'INDEX',     @level2name = N'{index.Name}';");
+                }
+            }
+
+            // ✅ توليد CREATE STATISTICS الذكي
+            foreach (var col in entity.Columns)
+            {
+                bool isNumericOrDate = col.TypeName.StartsWith("int", StringComparison.OrdinalIgnoreCase)
+                                    || col.TypeName.StartsWith("decimal", StringComparison.OrdinalIgnoreCase)
+                                    || col.TypeName.StartsWith("float", StringComparison.OrdinalIgnoreCase)
+                                    || col.TypeName.StartsWith("datetime", StringComparison.OrdinalIgnoreCase);
+
+                bool alreadyIndexed = entity.Indexes.Any(ix => ix.Columns.Contains(col.Name));
+                bool usedInCheck = entity.CheckConstraints.Any(ck => ck.Expression.Contains($"[{col.Name}]"));
+
+                if (isNumericOrDate && !alreadyIndexed && usedInCheck)
+                {
+                    var statName = $"STATS_{entity.Name}_{col.Name}";
+                    sb.AppendLine($@"
+IF EXISTS (
+    SELECT 1 FROM sys.stats WHERE name = N'{statName}'
+      AND object_id = OBJECT_ID(N'[{schema}].[{entity.Name}]')
+)
+BEGIN
+    DROP STATISTICS [{schema}].[{entity.Name}].[{statName}];
+END;
+
+CREATE STATISTICS [{statName}]
+ON [{schema}].[{entity.Name}]([{col.Name}]);");
+
+                    Console.WriteLine($"[TRACE:Statistics] Created statistics on {col.Name} → {statName}");
+                }
+            }
+
+            // ✅ توليد فهارس على الأعمدة المحسوبة
+            foreach (var comp in entity.ComputedColumns)
+            {
+                var indexName = $"IX_{entity.Name}_{comp.Name}_Computed";
+                bool alreadyIndexed = entity.Indexes.Any(ix => ix.Columns.Contains(comp.Name));
+
+                if (!alreadyIndexed && IsIndexableExpression(comp.Expression))
+                {
+                    sb.AppendLine($@"
+-- ⚙ Computed column index
+CREATE INDEX [{indexName}]
+ON [{schema}].[{entity.Name}]([{comp.Name}]);");
+
+                    Console.WriteLine($"[TRACE:ComputedIndex] Created index on computed column {comp.Name} → {indexName}");
+                }
             }
 
             return sb.ToString().Trim();
         }
-        
-        
-        //        /// <summary>
+
+        // ✅ مساعد لتحديد هل التعبير قابل للفهرسة
+        private static bool IsIndexableExpression(string expr)
+        {
+            var indexableFunctions = new[] { "LEN(", "UPPER(", "LOWER(", "DATEPART(", "YEAR(", "MONTH(", "DAY(" };
+            return indexableFunctions.Any(f => expr.Contains(f, StringComparison.OrdinalIgnoreCase));
+        }
+
+        // ✅ مساعد لاستخراج اسم العمود من تعبير CHECK بسيط
+        private static string? ExtractColumnFromExpression(string expr)
+        {
+            var match = Regex.Match(expr, @"\[(\w+)\]");
+            return match.Success ? match.Groups[1].Value : null;
+        }
+
         //        /// Builds SQL ALTER TABLE statements to create all constraints for an entity.
         //        /// Includes CHECK, FOREIGN KEY, and UNIQUE constraints, with optional extended descriptions.
         //        /// </summary>

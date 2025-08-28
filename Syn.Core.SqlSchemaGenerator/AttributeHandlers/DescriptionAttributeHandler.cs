@@ -1,6 +1,6 @@
 ﻿using System.Reflection;
 using Syn.Core.SqlSchemaGenerator.Models;
-using Syn.Core.SqlSchemaGenerator.Attributes;
+using System.ComponentModel;
 
 namespace Syn.Core.SqlSchemaGenerator.AttributeHandlers;
 
@@ -17,7 +17,7 @@ public class DescriptionAttributeHandler : ISchemaAttributeHandler
         var attr = property.GetCustomAttribute<DescriptionAttribute>();
         if (attr != null)
         {
-            column.Description = attr.Text;
+            column.Description = attr.Description;
         }
     }
 }

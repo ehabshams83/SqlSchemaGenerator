@@ -1,4 +1,6 @@
-﻿using Syn.Core.SqlSchemaGenerator.Attributes;
+﻿//using Syn.Core.SqlSchemaGenerator.Attributes;
+using Microsoft.EntityFrameworkCore;
+
 using Syn.Core.SqlSchemaGenerator.Models;
 
 using System.ComponentModel.DataAnnotations;
@@ -48,7 +50,7 @@ namespace Syn.Core.SqlSchemaGenerator.Core
                     prop.GetCustomAttribute<System.ComponentModel.DataAnnotations.KeyAttribute>() != null;
 
                 // Unique
-                var isUnique = prop.GetCustomAttribute<Attributes.UniqueAttribute>() != null;
+                var isUnique = prop.GetCustomAttribute<IndexAttribute>() != null && (prop.GetCustomAttribute<IndexAttribute>()?.IsUnique ?? false);
 
                 // Computed
                 var customCompAttr = prop.GetCustomAttribute<Attributes.ComputedAttribute>();
@@ -66,7 +68,7 @@ namespace Syn.Core.SqlSchemaGenerator.Core
                 var foreignColumn = customFkAttr?.TargetColumn ?? "Id";
 
                 // Index
-                var indexAttr = prop.GetCustomAttribute<Attributes.IndexAttribute>();
+                var indexAttr = prop.GetCustomAttribute<IndexAttribute>();
                 var hasIndex = indexAttr != null;
                 var isIndexUnique = indexAttr?.IsUnique ?? false;
                 var indexName = indexAttr?.Name;

@@ -3,6 +3,7 @@
     /// <summary>
     /// Specifies an index on the column. Can be named and marked as unique.
     /// </summary>
+    [Obsolete("Not supported any more, use ef index instead", true)]
     [AttributeUsage(AttributeTargets.Property, AllowMultiple = true)]
     public class IndexAttribute : Attribute
     {

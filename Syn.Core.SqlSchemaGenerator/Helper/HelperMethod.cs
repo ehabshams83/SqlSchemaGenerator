@@ -154,46 +154,46 @@ REFERENCES [{fk.ReferencedTable}]([{fk.ReferencedColumn}])
         /// </summary>
         /// <param name="type">The entity type to inspect.</param>
         /// <returns>List of composite index definitions.</returns>
-        public static List<IndexDefinition> GetCompositeIndexes(this Type type)
-        {
-            var indexes = new List<IndexDefinition>();
+        //public static List<IndexDefinition> GetCompositeIndexes(this Type type)
+        //{
+        //    var indexes = new List<IndexDefinition>();
 
-            foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
-            {
-                // Check for single-column index attribute
-                var singleIndexAttr = prop.GetCustomAttribute<IndexAttribute>();
-                if (singleIndexAttr != null)
-                {
-                    indexes.Add(new IndexDefinition
-                    {
-                        Name = singleIndexAttr.Name ?? $"IX_{type.Name}_{prop.Name}",
-                        Columns = new List<string> { prop.Name },
-                        IsUnique = singleIndexAttr.IsUnique
-                    });
-                }
+        //    foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        //    {
+        //        // Check for single-column index attribute
+        //        var singleIndexAttr = prop.GetCustomAttribute<IndexAttribute>();
+        //        if (singleIndexAttr != null)
+        //        {
+        //            indexes.Add(new IndexDefinition
+        //            {
+        //                Name = singleIndexAttr.Name ?? $"IX_{type.Name}_{prop.Name}",
+        //                Columns = new List<string> { prop.Name },
+        //                IsUnique = singleIndexAttr.IsUnique
+        //            });
+        //        }
 
-                // Check for composite index attribute
-                var compositeAttrs = prop.GetCustomAttributes<CompositeIndexAttribute>();
-                foreach (var attr in compositeAttrs)
-                {
-                    var existing = indexes.FirstOrDefault(ix => ix.Name == attr.Name);
-                    if (existing == null)
-                    {
-                        existing = new IndexDefinition
-                        {
-                            Name = attr.Name,
-                            IsUnique = attr.IsUnique
-                        };
-                        indexes.Add(existing);
-                    }
+        //        // Check for composite index attribute
+        //        var compositeAttrs = prop.GetCustomAttributes<CompositeIndexAttribute>();
+        //        foreach (var attr in compositeAttrs)
+        //        {
+        //            var existing = indexes.FirstOrDefault(ix => ix.Name == attr.Name);
+        //            if (existing == null)
+        //            {
+        //                existing = new IndexDefinition
+        //                {
+        //                    Name = attr.Name,
+        //                    IsUnique = attr.IsUnique
+        //                };
+        //                indexes.Add(existing);
+        //            }
 
-                    if (!existing.Columns.Contains(prop.Name))
-                        existing.Columns.Add(prop.Name);
-                }
-            }
+        //            if (!existing.Columns.Contains(prop.Name))
+        //                existing.Columns.Add(prop.Name);
+        //        }
+        //    }
 
-            return indexes;
-        }
+        //    return indexes;
+        //}
 
 
         public static bool HasIdentityAttribute(this PropertyInfo prop)
@@ -225,6 +225,14 @@ REFERENCES [{fk.ReferencedTable}]([{fk.ReferencedColumn}])
             // أي نوع رقمى أو منطقى
             return Convert.ToString(defaultValue, System.Globalization.CultureInfo.InvariantCulture);
         }
+
+
+        public static T? GetPropertyValue<T>(this object obj, string propertyName)
+        {
+            var prop = obj.GetType().GetProperty(propertyName);
+            return prop != null ? (T?)prop.GetValue(obj) : default;
+        }
+
 
 
     }

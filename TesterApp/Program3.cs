@@ -20,7 +20,7 @@ namespace TesterApp
             var handlers = new List<ISchemaAttributeHandler>
             {
                 new IndexAttributeHandler(),
-                new UniqueAttributeHandler(),
+                //new UniqueAttributeHandler(),
                 new DefaultValueAttributeHandler(),
                 new DescriptionAttributeHandler(),
                 new RequiredAttributeHandler(),

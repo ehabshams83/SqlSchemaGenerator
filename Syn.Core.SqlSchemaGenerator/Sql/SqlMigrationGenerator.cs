@@ -118,7 +118,7 @@ public class SqlMigrationGenerator
             return "-- Invalid index metadata";
 
         var unique = index.IsUnique ? "UNIQUE " : "";
-        var columns = string.Join(", ", index.Columns.Select(c => $"[{c}]"));
+        var columns = string.Join(", ", index.IncludeColumns.Select(c => $"[{c}]"));
 
         return $"CREATE {unique}INDEX [{index.Name}] ON [{step.Schema}].[{step.EntityName}] ({columns});";
     }

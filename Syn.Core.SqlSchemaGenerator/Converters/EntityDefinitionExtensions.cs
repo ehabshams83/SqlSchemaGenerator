@@ -57,8 +57,8 @@ namespace Syn.Core.SqlSchemaGenerator.Converters
 
                 Indexes = model.TableIndexes.Select(i => new IndexDefinition
                 {
-                    Name = i.Name ?? $"IX_{model.Name}_{string.Join("_", i.Columns)}",
-                    Columns = i.Columns,
+                    Name = i.Name ?? $"IX_{model.Name}_{string.Join("_", i.IncludeColumns)}",
+                    Columns = i.IncludeColumns,
                     IsUnique = i.IsUnique,
                     Description = i.Description
                 }).ToList(),

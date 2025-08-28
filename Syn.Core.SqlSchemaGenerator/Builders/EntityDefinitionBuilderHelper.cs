@@ -3,6 +3,7 @@ using Syn.Core.SqlSchemaGenerator.Models;
 
 using System.ComponentModel.DataAnnotations;
 using System.Reflection;
+using System.Text.RegularExpressions;
 
 namespace Syn.Core.SqlSchemaGenerator.Builders;
 
@@ -255,28 +256,6 @@ public partial class EntityDefinitionBuilder
     /// <param name="entityType">The CLR type being analyzed.</param>
     /// <param name="entity">The <see cref="EntityDefinition"/> being built.</param>
     /// <param name="allEntities">All known entities for cross-reference.</param>
-    /// <summary>
-    /// Infers One-to-One relationships based on navigation properties and FK/PK structure.
-    /// Adds relationship metadata to both source and target entities to support constraint generation.
-    /// </summary>
-    /// <summary>
-    /// Infers One-to-One relationships between entities based on navigation properties and FK/PK structure.
-    /// Automatically sets CascadeDelete when the relationship pattern matches common ownership (e.g. UserProfile → User).
-    /// </summary>
-    /// <param name="entityType">The CLR type of the source entity.</param>
-    /// <param name="entity">The EntityDefinition representing the source entity.</param>
-    /// <param name="allEntities">All known entities for cross-reference.</param>
-    /// <summary>
-    /// Infers One-to-One relationships based on foreign keys that are also unique or primary keys.
-    /// Adds the relationship to both the source and target entities.
-    /// </summary>
-
-    /// <summary>
-    /// Infers One-to-One relationships:
-    /// - يعتبر العلاقة One-to-One لو الـ FK عليه Unique أو PK
-    /// - أو لو فيه ملاحة مفردة متبادلة (Reference ↔ Reference)
-    /// - يمنع إضافة One-to-One لو فيه علاقة 1:N أو N:N بين نفس الكيانين
-    /// </summary>
     public void InferOneToOneRelationships(Type clrType, EntityDefinition entity, List<EntityDefinition> allEntities)
     {
         Console.WriteLine($"[TRACE:OneToOne] Analyzing entity {entity.Name}");
@@ -298,7 +277,6 @@ public partial class EntityDefinitionBuilder
                 continue;
             }
 
-            // ✅ لا نضيف 1:1 لو فيه 1:N أو N:N بين نفس الزوج
             bool alreadyHasNonOneToOne =
                 entity.Relationships.Any(r => r.TargetEntity == targetEntity.Name && r.Type != RelationshipType.OneToOne) ||
                 targetEntity.Relationships.Any(r => r.TargetEntity == entity.Name && r.Type != RelationshipType.OneToOne);
@@ -316,8 +294,8 @@ public partial class EntityDefinitionBuilder
             bool isAlsoPrimaryKey = entity.PrimaryKey?.Columns?.Count == 1 &&
                                     entity.PrimaryKey.Columns.Contains(fk.Column, StringComparer.OrdinalIgnoreCase);
 
-            bool hasRefToTarget = HasSingleReferenceNavigation(clrType, targetEntity.ClrType);
-            bool targetHasRefBack = HasSingleReferenceNavigation(targetEntity.ClrType, clrType);
+            bool hasRefToTarget = HasSingleReferenceNavigation(clrType, targetEntity.ClrType, out var sourceProp);
+            bool targetHasRefBack = HasSingleReferenceNavigation(targetEntity.ClrType, clrType, out var targetProp);
 
             bool isStrictOneToOne = isUnique || isAlsoPrimaryKey;
             bool isNavOneToOne = hasRefToTarget && targetHasRefBack;
@@ -343,34 +321,50 @@ public partial class EntityDefinitionBuilder
                 }
             }
 
+            var isRequired = sourceProp != null &&
+                             clrType.GetProperty(sourceProp)?.GetCustomAttribute<RequiredAttribute>() != null;
+
             entity.Relationships.Add(new RelationshipDefinition
             {
                 SourceEntity = entity.Name,
                 TargetEntity = targetEntity.Name,
+                SourceProperty = sourceProp ?? $"NavTo{targetEntity.Name}",
+                TargetProperty = targetProp,
+                SourceToTargetColumn = fk.Column,
                 Type = RelationshipType.OneToOne,
-                OnDelete = fk.OnDelete == ReferentialAction.Cascade ? ReferentialAction.Cascade : ReferentialAction.NoAction
+                IsRequired = isRequired,
+                OnDelete = fk.OnDelete
             });
 
             targetEntity.Relationships.Add(new RelationshipDefinition
             {
                 SourceEntity = targetEntity.Name,
                 TargetEntity = entity.Name,
+                SourceProperty = targetProp ?? $"NavTo{entity.Name}",
+                TargetProperty = sourceProp,
+                SourceToTargetColumn = fk.Column,
                 Type = RelationshipType.OneToOne,
-                OnDelete = fk.OnDelete == ReferentialAction.Cascade ? ReferentialAction.Cascade : ReferentialAction.NoAction
+                IsRequired = false,
+                OnDelete = fk.OnDelete
             });
 
-            Console.WriteLine($"    ✅ OneToOne relationship added: {entity.Name} <-> {targetEntity.Name}");
+            Console.WriteLine($"    ✅ OneToOne relationship added: {entity.Name}.{sourceProp} <-> {targetEntity.Name}.{targetProp}");
         }
     }
 
     /// <summary>
     /// Detects if the type has a single reference navigation to another type (non-collection, non-string).
     /// </summary>
-    private static bool HasSingleReferenceNavigation(Type from, Type to)
+    private static bool HasSingleReferenceNavigation(Type from, Type to, out string? propName)
     {
-        return from.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                  .Any(p => p.PropertyType == to);
+        var props = from.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                    .Where(p => p.PropertyType == to)
+                    .ToList();
+
+        propName = props.Count == 1 ? props[0].Name : null;
+        return props.Count == 1;
     }
+
     /// <summary>
     /// Infers CHECK constraints from validation attributes more broadly:
     /// - [StringLength], [MaxLength], [MinLength]
@@ -380,6 +374,9 @@ public partial class EntityDefinitionBuilder
     public void InferCheckConstraints(Type clrType, EntityDefinition entity)
     {
         Console.WriteLine($"[TRACE:CheckConstraints] Analyzing entity {entity.Name}");
+
+        bool AlreadyHasConstraint(string expr) =>
+            entity.CheckConstraints.Any(c => c.Expression.Equals(expr, StringComparison.OrdinalIgnoreCase));
 
         // 🥇 PK: Not Null فقط، بدون إعادة تفعيل Identity
         if (entity.PrimaryKey?.Columns != null)
@@ -392,16 +389,12 @@ public partial class EntityDefinitionBuilder
                 {
                     col.IsNullable = false;
 
-                    // 🔍 تتبع قبل تعديل Identity
                     Console.WriteLine($"    [TRACE:CheckConstraints] PK {col.Name} → Identity={col.IsIdentity} (before)");
 
-                    // ✅ لا نعيد تفعيل Identity لو تم تعطيله في ApplyPrimaryKeyOverrides
                     if (!col.IsIdentity)
                         Console.WriteLine($"    ⚠ Identity remains false for {col.Name} (composite PK)");
                     else
                         Console.WriteLine($"    ✅ PK {col.Name}: Not Null + Identity");
-
-                    // لا نعدل IsIdentity هنا إطلاقًا
                 }
             }
         }
@@ -417,25 +410,19 @@ public partial class EntityDefinitionBuilder
             // 1) قيد أساسي من Nullability + نوع العمود
             if (!col.IsNullable)
             {
-                if (IsStringColumn(col))
-                {
-                    entity.CheckConstraints.Add(new CheckConstraintDefinition
-                    {
-                        Name = $"CK_{entity.Name}_{col.Name}_NotEmpty",
-                        Expression = $"LEN([{col.Name}]) > 0",
-                        Description = $"{col.Name} must not be empty"
-                    });
-                    Console.WriteLine($"    ✅ Added CHECK (NotEmpty) on {col.Name}");
-                }
-                else
+                string expr = IsStringColumn(col)
+                    ? $"LEN([{col.Name}]) > 0"
+                    : $"[{col.Name}] IS NOT NULL";
+
+                if (!AlreadyHasConstraint(expr))
                 {
                     entity.CheckConstraints.Add(new CheckConstraintDefinition
                     {
                         Name = $"CK_{entity.Name}_{col.Name}_NotNull",
-                        Expression = $"[{col.Name}] IS NOT NULL",
-                        Description = $"{col.Name} must not be NULL"
+                        Expression = expr,
+                        Description = $"{col.Name} must not be NULL or empty"
                     });
-                    Console.WriteLine($"    ✅ Added CHECK (NotNull) on {col.Name}");
+                    Console.WriteLine($"    ✅ Added CHECK (NotNull/NotEmpty) on {col.Name}");
                 }
             }
 
@@ -443,67 +430,126 @@ public partial class EntityDefinitionBuilder
             var strLenAttr = prop.GetCustomAttribute<StringLengthAttribute>();
             if (strLenAttr?.MaximumLength > 0)
             {
-                entity.CheckConstraints.Add(new CheckConstraintDefinition
+                var expr = $"LEN([{col.Name}]) <= {strLenAttr.MaximumLength}";
+                if (!AlreadyHasConstraint(expr))
                 {
-                    Name = $"CK_{entity.Name}_{col.Name}_MaxLen",
-                    Expression = $"LEN([{col.Name}]) <= {strLenAttr.MaximumLength}",
-                    Description = $"Max length of {col.Name} is {strLenAttr.MaximumLength} characters"
-                });
-                Console.WriteLine($"    ✅ Added CHECK (StringLength) on {col.Name}");
+                    entity.CheckConstraints.Add(new CheckConstraintDefinition
+                    {
+                        Name = $"CK_{entity.Name}_{col.Name}_MaxLen",
+                        Expression = expr,
+                        Description = $"Max length of {col.Name} is {strLenAttr.MaximumLength} characters"
+                    });
+                    Console.WriteLine($"    ✅ Added CHECK (StringLength) on {col.Name}");
+                }
             }
 
             var maxLenAttr = prop.GetCustomAttribute<MaxLengthAttribute>();
             if (maxLenAttr?.Length > 0)
             {
-                entity.CheckConstraints.Add(new CheckConstraintDefinition
+                var expr = $"LEN([{col.Name}]) <= {maxLenAttr.Length}";
+                if (!AlreadyHasConstraint(expr))
                 {
-                    Name = $"CK_{entity.Name}_{col.Name}_MaxLen",
-                    Expression = $"LEN([{col.Name}]) <= {maxLenAttr.Length}",
-                    Description = $"Max length of {col.Name} is {maxLenAttr.Length} characters"
-                });
-                Console.WriteLine($"    ✅ Added CHECK (MaxLength) on {col.Name}");
+                    entity.CheckConstraints.Add(new CheckConstraintDefinition
+                    {
+                        Name = $"CK_{entity.Name}_{col.Name}_MaxLen",
+                        Expression = expr,
+                        Description = $"Max length of {col.Name} is {maxLenAttr.Length} characters"
+                    });
+                    Console.WriteLine($"    ✅ Added CHECK (MaxLength) on {col.Name}");
+                }
             }
 
             var minLenAttr = prop.GetCustomAttribute<MinLengthAttribute>();
             if (minLenAttr?.Length > 0)
             {
-                entity.CheckConstraints.Add(new CheckConstraintDefinition
+                var expr = $"LEN([{col.Name}]) >= {minLenAttr.Length}";
+                if (!AlreadyHasConstraint(expr))
                 {
-                    Name = $"CK_{entity.Name}_{col.Name}_MinLen",
-                    Expression = $"LEN([{col.Name}]) >= {minLenAttr.Length}",
-                    Description = $"Min length of {col.Name} is {minLenAttr.Length} characters"
-                });
-                Console.WriteLine($"    ✅ Added CHECK (MinLength) on {col.Name}");
+                    entity.CheckConstraints.Add(new CheckConstraintDefinition
+                    {
+                        Name = $"CK_{entity.Name}_{col.Name}_MinLen",
+                        Expression = expr,
+                        Description = $"Min length of {col.Name} is {minLenAttr.Length} characters"
+                    });
+                    Console.WriteLine($"    ✅ Added CHECK (MinLength) on {col.Name}");
+                }
             }
 
+            // تابع في الجزء الثاني...
             var rangeAttr = prop.GetCustomAttribute<RangeAttribute>();
             if (rangeAttr?.Minimum != null && rangeAttr.Maximum != null)
             {
-                entity.CheckConstraints.Add(new CheckConstraintDefinition
+                string expr;
+
+                if (rangeAttr.Minimum is DateTime minDate && rangeAttr.Maximum is DateTime maxDate)
                 {
-                    Name = $"CK_{entity.Name}_{col.Name}_Range",
-                    Expression = $"[{col.Name}] BETWEEN {rangeAttr.Minimum} AND {rangeAttr.Maximum}",
-                    Description = $"{col.Name} must be between {rangeAttr.Minimum} and {rangeAttr.Maximum}"
-                });
-                Console.WriteLine($"    ✅ Added CHECK (Range) on {col.Name}");
+                    expr = $"[{col.Name}] BETWEEN '{minDate:yyyy-MM-dd}' AND '{maxDate:yyyy-MM-dd}'";
+                }
+                else
+                {
+                    expr = $"[{col.Name}] BETWEEN {rangeAttr.Minimum} AND {rangeAttr.Maximum}";
+                }
+
+                if (!AlreadyHasConstraint(expr))
+                {
+                    entity.CheckConstraints.Add(new CheckConstraintDefinition
+                    {
+                        Name = $"CK_{entity.Name}_{col.Name}_Range",
+                        Expression = expr,
+                        Description = $"{col.Name} must be between {rangeAttr.Minimum} and {rangeAttr.Maximum}"
+                    });
+                    Console.WriteLine($"    ✅ Added CHECK (Range) on {col.Name}");
+                }
             }
 
             var requiredAttr = prop.GetCustomAttribute<RequiredAttribute>();
             if (requiredAttr != null)
             {
-                var expr = IsStringColumn(col)
+                string expr = IsStringColumn(col)
                     ? $"LEN([{col.Name}]) > 0"
                     : $"[{col.Name}] IS NOT NULL";
-                entity.CheckConstraints.Add(new CheckConstraintDefinition
+
+                if (!AlreadyHasConstraint(expr))
                 {
-                    Name = $"CK_{entity.Name}_{col.Name}_Required",
-                    Expression = expr,
-                    Description = $"{col.Name} is required"
-                });
-                Console.WriteLine($"    ✅ Added CHECK (Required) on {col.Name}");
+                    entity.CheckConstraints.Add(new CheckConstraintDefinition
+                    {
+                        Name = $"CK_{entity.Name}_{col.Name}_Required",
+                        Expression = expr,
+                        Description = $"{col.Name} is required"
+                    });
+                    Console.WriteLine($"    ✅ Added CHECK (Required) on {col.Name}");
+                }
+            }
+
+            var regexAttr = prop.GetCustomAttribute<RegularExpressionAttribute>();
+            if (regexAttr != null && !string.IsNullOrWhiteSpace(regexAttr.Pattern))
+            {
+                // ملاحظة: SQL لا يدعم regex مباشرة، نستخدم LIKE لو ممكن
+                if (regexAttr.Pattern.StartsWith("^") && regexAttr.Pattern.EndsWith("$") &&
+                    !regexAttr.Pattern.Contains(".*") && !regexAttr.Pattern.Contains("\\"))
+                {
+                    var likeExpr = regexAttr.Pattern.Trim('^', '$').Replace(".", "_");
+                    var expr = $"[{col.Name}] LIKE '{likeExpr}'";
+
+                    if (!AlreadyHasConstraint(expr))
+                    {
+                        entity.CheckConstraints.Add(new CheckConstraintDefinition
+                        {
+                            Name = $"CK_{entity.Name}_{col.Name}_Regex",
+                            Expression = expr,
+                            Description = $"{col.Name} must match pattern {regexAttr.Pattern}"
+                        });
+                        Console.WriteLine($"    ✅ Added CHECK (Regex-LIKE) on {col.Name}");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"    ⚠ Skipped Regex CHECK on {col.Name}: pattern too complex for SQL LIKE");
+                }
             }
         }
     }
+
     /// <summary>
     /// Detects string SQL types, covering sizes and (max).
     /// </summary>
@@ -515,6 +561,55 @@ public partial class EntityDefinitionBuilder
                t == "char" || t == "nchar" ||
                t == "text" || t == "ntext";
     }
+
+    public static bool IsIndexableExpression(string expression)
+    {
+        if (string.IsNullOrWhiteSpace(expression))
+            return false;
+
+        var indexableFunctions = new[]
+        {
+        "LEN(", "UPPER(", "LOWER(", "LTRIM(", "RTRIM(",
+        "YEAR(", "MONTH(", "DAY(", "DATEPART(", "ISNULL("
+    };
+
+        return indexableFunctions.Any(f =>
+            expression.Contains(f, StringComparison.OrdinalIgnoreCase));
+    }
+
+    public static string? ExtractColumnFromExpression(string expression)
+    {
+        if (string.IsNullOrWhiteSpace(expression))
+            return null;
+
+        var match = Regex.Match(expression, @"\[(\w+)\]");
+        return match.Success ? match.Groups[1].Value : null;
+    }
+
+    private bool IsNavigationProperty(PropertyInfo prop)
+    {
+        var type = prop.PropertyType;
+
+        // ✅ أنواع SQL المعروفة
+        var sqlTypes = new[]
+        {
+        typeof(string), typeof(int), typeof(long), typeof(short),
+        typeof(decimal), typeof(double), typeof(float),
+        typeof(bool), typeof(DateTime), typeof(Guid), typeof(byte[])
+    };
+
+        if (sqlTypes.Contains(type))
+            return false;
+
+        // ❌ لو النوع كلاس أو مجموعة، نعتبره تنقلي
+        if (type.IsClass || typeof(System.Collections.IEnumerable).IsAssignableFrom(type))
+            return true;
+
+        return false;
+    }
+
+
+
     ///// <summary>
     ///// Helper method to check if the SQL column type is a string type (covers sizes and max).
     ///// </summary>

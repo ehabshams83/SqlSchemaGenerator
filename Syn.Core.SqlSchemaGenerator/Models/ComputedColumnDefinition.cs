@@ -50,4 +50,10 @@ public class ComputedColumnDefinition
     /// Optional ordering value used to control column position in generated SQL.
     /// </summary>
     public int? Order { get; set; }
+
+    /// <summary>
+    /// Indicates whether the computed expression is indexable (e.g., uses LEN, UPPER, DATEPART).
+    /// Used to auto-generate indexes on computed columns.
+    /// </summary>
+    public bool IsIndexable { get; set; }
 }

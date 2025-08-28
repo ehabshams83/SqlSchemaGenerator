@@ -3,6 +3,7 @@
 /// <summary>
 /// Provides a human-readable description for the column or entity.
 /// </summary>
+[Obsolete("Use System.ComponentModel.DescriptionAttribute instead.", true)]
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Class)]
 public class DescriptionAttribute : Attribute
 {

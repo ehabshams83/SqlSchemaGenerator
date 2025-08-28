@@ -68,4 +68,6 @@ public class ColumnDefinition
     /// The target entity name for the foreign key relationship.
     /// </summary>
     public string? ForeignKeyTarget { get; set; }
+    public bool IsNavigationProperty { get; set; }
+
 }

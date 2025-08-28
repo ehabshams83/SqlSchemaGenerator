@@ -301,13 +301,13 @@ public class MigrationStepBuilder : IMigrationStepBuilder
                     {
                         Name = index.Name,
                         IsUnique = index.IsUnique,
-                        Columns = new List<string>()
+                        IncludeColumns = new List<string>()
                     };
                     indexGroups[index.Name] = existing;
                 }
 
-                if (!existing.Columns.Contains(column.Name))
-                    existing.Columns.Add(column.Name);
+                if (!existing.IncludeColumns.Contains(column.Name))
+                    existing.IncludeColumns.Add(column.Name);
             }
         }
 
@@ -320,7 +320,7 @@ public class MigrationStepBuilder : IMigrationStepBuilder
                 {
                     Name = index.Name,
                     IsUnique = index.IsUnique,
-                    Columns = index.Columns.ToList()
+                    IncludeColumns = index.IncludeColumns.ToList()
                 };
             }
         }
@@ -361,6 +361,6 @@ public class MigrationStepBuilder : IMigrationStepBuilder
     {
         return
             oldIndex.IsUnique != newIndex.IsUnique ||
-            !oldIndex.Columns.SequenceEqual(newIndex.Columns);
+            !oldIndex.IncludeColumns.SequenceEqual(newIndex.IncludeColumns);
     }
 }

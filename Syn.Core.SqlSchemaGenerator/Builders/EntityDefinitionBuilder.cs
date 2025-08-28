@@ -86,7 +86,11 @@ public partial class EntityDefinitionBuilder
 
 
     /// <summary>
-    /// Builds an <see cref="EntityDefinition"/> instance from the specified CLR type.
+    /// Builds an <see cref="EntityDefinition"/> model from the specified entity <see cref="Type"/>.
+    /// This method scans the entity type's public instance properties, applies column handlers,
+    /// and populates all relevant metadata, including columns, computed columns, constraints,
+    /// indexes, and optional descriptions. The resulting definition is ready for SQL generation
+    /// using the unified <c>Build(EntityDefinition)</c> method.
     /// </summary>
     /// <param name="entityType">The CLR type representing the entity.</param>
     /// <returns>The constructed <see cref="EntityDefinition"/> instance.</returns>
@@ -100,14 +104,7 @@ public partial class EntityDefinitionBuilder
     /// Console.WriteLine($"Entity: {def.Name}, Columns: {def.Columns.Count}");
     /// </code>
     /// </example>
-    /// <summary>
-    /// Builds an <see cref="EntityDefinition"/> model from the specified entity <see cref="Type"/>.
-    /// This method scans the entity type's public instance properties, applies column handlers,
-    /// and populates all relevant metadata, including columns, computed columns, constraints,
-    /// indexes, and optional descriptions. The resulting definition is ready for SQL generation
-    /// using the unified <c>Build(EntityDefinition)</c> method.
-    /// </summary>
-    /// <param name="entityType">The CLR type representing the entity to analyze.</param>
+
     /// <returns>A fully populated <see cref="EntityDefinition"/> instance.</returns>
     public EntityDefinition Build(Type entityType)
     {
@@ -123,95 +120,29 @@ public partial class EntityDefinitionBuilder
             ClrType = entityType
         };
 
-        // 📋 Table-level description
-        var tableDescAttr = entityType.GetCustomAttribute<DescriptionAttribute>();
-        if (tableDescAttr != null && !string.IsNullOrWhiteSpace(tableDescAttr.Text))
-            entity.Description = tableDescAttr.Text;
+        var tableDescAttr = entityType.GetCustomAttribute<System.ComponentModel.DescriptionAttribute>();
+        if (tableDescAttr != null && !string.IsNullOrWhiteSpace(tableDescAttr.Description))
+            entity.Description = tableDescAttr.Description;
 
-        // 🧩 Columns & property analysis
+        // ✅ الأعمدة (بدون Navigation)
         foreach (var prop in entityType
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
-            .Where(p => p.GetCustomAttribute<NotMappedAttribute>() == null))
+            .Where(p => p.GetCustomAttribute<NotMappedAttribute>() == null && !IsNavigationProperty(p)))
         {
-            // 🛡 فلترة الملاحة
-            if (IsCollectionOfEntity(prop) || IsReferenceToEntity(prop))
-                continue;
-
-            var columnName = GetColumnName(prop);
-            var isNullable = IsNullable(prop);
-            var maxLength = GetMaxLength(prop);
-            var defaultValue = GetDefaultValue(prop);
-
-            var columnModel = new ColumnModel
-            {
-                Name = columnName,
-                PropertyType = prop.PropertyType,
-                IsNullable = isNullable,
-                MaxLength = maxLength,
-                DefaultValue = defaultValue
-            };
-
-            foreach (var handler in _handlers)
-                handler.Apply(prop, columnModel);
-
-            if (columnModel.IsIgnored) continue;
-
-            var columnDef = ToColumnDefinition(columnModel);
-
-            // الأولوية هنا لـ Attribute كإضافة فقط
-            if (prop.HasIdentityAttribute())
-                columnDef.IsIdentity = true;
-
-            var colDescAttr = prop.GetCustomAttribute<DescriptionAttribute>();
-            if (colDescAttr != null && !string.IsNullOrWhiteSpace(colDescAttr.Text))
-                columnDef.Description = colDescAttr.Text;
-
-            // 🔍 تتبع قبل إضافة العمود
-            Console.WriteLine($"[TRACE:ColumnInit] {entity.Name}.{columnDef.Name} → Identity={columnDef.IsIdentity}, Nullable={columnDef.IsNullable}, Type={columnDef.TypeName}");
-
-            entity.Columns.Add(columnDef);
-
-            // Computed columns
-            if (!string.IsNullOrWhiteSpace(columnModel.ComputedExpression))
-            {
-                entity.ComputedColumns.Add(new ComputedColumnDefinition
-                {
-                    Name = columnName,
-                    Expression = columnModel.ComputedExpression
-                });
-            }
-
-            // CHECK constraints from column model
-            var checks = ToCheckConstraints(columnModel, entity.Name);
-            entity.CheckConstraints.AddRange(checks);
-
-            // Indexes from column model
-            var indexes = ToIndexes(columnModel, entity.Name);
-            entity.Indexes.AddRange(indexes);
+            BuildColumn(prop, entity);
         }
 
-        // 🎯 Primary key أولاً
+        // ✅ المفتاح الأساسي
         entity.PrimaryKey = GetPrimaryKey(entityType);
-
-        // 🆕 لو فيه PK من غير اسم → توليد اسم افتراضي
         if (entity.PrimaryKey != null && string.IsNullOrWhiteSpace(entity.PrimaryKey.Name))
-        {
             entity.PrimaryKey.Name = $"PK_{entity.Name}";
-        }
 
-        // 🆕 أولوية الـ PK override
         ApplyPrimaryKeyOverrides(entity);
 
-        // 🔍 تتبع بعد تطبيق الـ override
         foreach (var col in entity.Columns)
-        {
             Console.WriteLine($"[TRACE:ColumnPostOverride] {entity.Name}.{col.Name} → Identity={col.IsIdentity}, Nullable={col.IsNullable}");
-        }
 
-        // Unique constraints
-        entity.UniqueConstraints = GetUniqueConstraints(entityType);
-
-        // Explicit foreign keys
+        // ✅ المفاتيح الأجنبية
         entity.ForeignKeys = entityType.GetForeignKeys();
         foreach (var fk in entity.ForeignKeys)
         {
@@ -219,29 +150,86 @@ public partial class EntityDefinitionBuilder
                 fk.ConstraintName = $"FK_{entity.Name}_{fk.Column}";
         }
 
-        // علاقات من الـ Navigation Properties
         InferForeignKeysFromNavigation(entityType, entity);
-
-        // One-to-One relationships
         InferOneToOneRelationships(entityType, entity, new List<EntityDefinition> { entity });
-
-        // CHECK constraints from Attributes
-        InferCheckConstraints(entityType, entity);
-
-        // Validate FKs
         ValidateForeignKeys(entity);
 
-        // Class-level indexes
-        var classLevelIndexes = GetIndexes(entityType);
-        entity.Indexes.AddRange(classLevelIndexes);
+        // ✅ فهارس من EF فقط
+        var efIndexes = GetIndexes(entityType);
+        entity.Indexes.AddRange(efIndexes);
 
-        // إزالة الفهارس المكررة
+        // ✅ فهارس داعمة للـ CHECK (أسماء ثابتة)
+        foreach (var ck in entity.CheckConstraints)
+        {
+            foreach (var colName in ck.ReferencedColumns)
+            {
+                bool alreadyIndexed = entity.Indexes.Any(ix => ix.Columns.Contains(colName, StringComparer.OrdinalIgnoreCase));
+                if (!alreadyIndexed && entity.Columns.Any(c => c.Name.Equals(colName, StringComparison.OrdinalIgnoreCase)))
+                {
+                    var ixName = $"IX_{entity.Name}_{colName}_ForCheck"; // ثابت
+                    entity.Indexes.Add(new IndexDefinition
+                    {
+                        Name = ixName,
+                        Columns = new List<string> { colName },
+                        IsUnique = false,
+                        Description = $"Auto index to support CHECK constraint {ck.Name}"
+                    });
+                    Console.WriteLine($"[TRACE:AutoIndex] Added index for CHECK: {ixName} on {colName}");
+                }
+            }
+        }
+
+        // ✅ فهارس الأعمدة الحساسة (أسماء ثابتة)
+        var sensitiveNames = new[] { "Email", "Username", "Code" };
+        foreach (var col in entity.Columns)
+        {
+            if (sensitiveNames.Contains(col.Name, StringComparer.OrdinalIgnoreCase))
+            {
+                var alreadyIndexed = entity.Indexes.Any(ix => ix.Columns.Contains(col.Name, StringComparer.OrdinalIgnoreCase));
+                if (!alreadyIndexed)
+                {
+                    var autoIndexName = $"IX_{entity.Name}_{col.Name}_AutoSensitive";
+                    entity.Indexes.Add(new IndexDefinition
+                    {
+                        Name = autoIndexName,
+                        Columns = new List<string> { col.Name },
+                        IsUnique = true,
+                        Description = "Auto-generated index for login-critical field"
+                    });
+                    Console.WriteLine($"[TRACE:AutoIndex] Added sensitive index: {autoIndexName} on {col.Name}");
+                }
+            }
+        }
+
+        // ✅ فهارس أعمدة العلاقات (أسماء ثابتة)
+        foreach (var rel in entity.Relationships)
+        {
+            var fkColumn = rel.SourceToTargetColumn ?? $"{rel.TargetEntity}Id";
+            var alreadyIndexed = entity.Indexes.Any(ix => ix.Columns.Contains(fkColumn, StringComparer.OrdinalIgnoreCase));
+            if (!alreadyIndexed && entity.Columns.Any(c => c.Name.Equals(fkColumn, StringComparison.OrdinalIgnoreCase)))
+            {
+                var autoIndexName = $"IX_{entity.Name}_{fkColumn}_AutoNav";
+                entity.Indexes.Add(new IndexDefinition
+                {
+                    Name = autoIndexName,
+                    Columns = new List<string> { fkColumn },
+                    IsUnique = false,
+                    Description = "Auto-generated index for navigation property"
+                });
+                Console.WriteLine($"[TRACE:AutoIndex] Added navigation index: {autoIndexName} on {fkColumn}");
+            }
+        }
+
+        // ✅ إزالة التكرار في الفهارس
         entity.Indexes = entity.Indexes
             .GroupBy(ix => ix.Name)
             .Select(g => g.First())
             .ToList();
 
-        // Trace
+        // ✅ استنتاج قيود CHECK بعد تثبيت الأسماء
+        InferCheckConstraints(entityType, entity);
+
+        // ✅ تتبع
         Console.WriteLine($"[TRACE] Built entity: {entity.Name}");
         Console.WriteLine("  Columns:");
         foreach (var col in entity.Columns)
@@ -255,8 +243,12 @@ public partial class EntityDefinitionBuilder
         foreach (var ck in entity.CheckConstraints)
             Console.WriteLine($"    ✅ {ck.Name}: {ck.Expression}");
 
+        Console.WriteLine("  Indexes:");
+        foreach (var ix in entity.Indexes)
+            Console.WriteLine($"    📌 {ix.Name} → Columns=[{string.Join(", ", ix.Columns)}] Unique={ix.IsUnique}");
+
         return entity;
-    }    // Helper methods
+    }
     private bool IsCollectionOfEntity(PropertyInfo prop)
     {
         if (prop.PropertyType == typeof(string)) return false;
@@ -741,29 +733,127 @@ public partial class EntityDefinitionBuilder
     /// <summary>
     /// Converts check constraints from ColumnModel to CheckConstraintDefinition.
     /// </summary>
-    private static IEnumerable<CheckConstraintDefinition> ToCheckConstraints(ColumnModel model, string entityName)
+    public static List<CheckConstraintDefinition> ToCheckConstraints(PropertyInfo prop, string entityName)
     {
-        return model.CheckConstraints.Select(c => new CheckConstraintDefinition
-        {
-            Name = c.Name ?? $"CK_{entityName}_{model.Name}_{Guid.NewGuid().ToString("N")[..6]}",
-            Expression = c.Expression
-        });
-    }
+        var result = new List<CheckConstraintDefinition>();
+        var colName = GetColumnName(prop);
+        var referenced = new List<string> { colName };
 
-    private static List<IndexDefinition> GetIndexes(Type type)
+        bool isString = prop.PropertyType == typeof(string) || prop.PropertyType == typeof(char);
+
+        // 🔹 دالة لتوحيد وتطبيع الاسم
+        string Normalize(string s) => s?.Trim().Replace(" ", "_");
+
+        // ✅ Required
+        if (prop.GetCustomAttribute<RequiredAttribute>() != null)
+        {
+            var expr = isString ? $"LEN([{colName}]) > 0" : $"[{colName}] IS NOT NULL";
+            result.Add(new CheckConstraintDefinition
+            {
+                Name = $"CK_{Normalize(entityName)}_{Normalize(colName)}_Required",
+                Expression = expr,
+                Description = $"{colName} is required",
+                ReferencedColumns = referenced
+            });
+        }
+
+        // ✅ StringLength
+        var strLen = prop.GetCustomAttribute<StringLengthAttribute>();
+        if (strLen?.MaximumLength > 0)
+        {
+            result.Add(new CheckConstraintDefinition
+            {
+                Name = $"CK_{Normalize(entityName)}_{Normalize(colName)}_MaxLen",
+                Expression = $"LEN([{colName}]) <= {strLen.MaximumLength}",
+                Description = $"Max length of {colName} is {strLen.MaximumLength} characters",
+                ReferencedColumns = referenced
+            });
+        }
+
+        // ✅ MaxLength
+        var maxLen = prop.GetCustomAttribute<MaxLengthAttribute>();
+        if (maxLen?.Length > 0)
+        {
+            result.Add(new CheckConstraintDefinition
+            {
+                Name = $"CK_{Normalize(entityName)}_{Normalize(colName)}_MaxLen",
+                Expression = $"LEN([{colName}]) <= {maxLen.Length}",
+                Description = $"Max length of {colName} is {maxLen.Length} characters",
+                ReferencedColumns = referenced
+            });
+        }
+
+        // ✅ MinLength
+        var minLen = prop.GetCustomAttribute<MinLengthAttribute>();
+        if (minLen?.Length > 0)
+        {
+            result.Add(new CheckConstraintDefinition
+            {
+                Name = $"CK_{Normalize(entityName)}_{Normalize(colName)}_MinLen",
+                Expression = $"LEN([{colName}]) >= {minLen.Length}",
+                Description = $"Min length of {colName} is {minLen.Length} characters",
+                ReferencedColumns = referenced
+            });
+        }
+
+        // ✅ Range
+        var range = prop.GetCustomAttribute<RangeAttribute>();
+        if (range?.Minimum != null && range.Maximum != null)
+        {
+            string expr = range.Minimum is DateTime minDate && range.Maximum is DateTime maxDate
+                ? $"[{colName}] BETWEEN '{minDate:yyyy-MM-dd}' AND '{maxDate:yyyy-MM-dd}'"
+                : $"[{colName}] BETWEEN {range.Minimum} AND {range.Maximum}";
+
+            result.Add(new CheckConstraintDefinition
+            {
+                Name = $"CK_{Normalize(entityName)}_{Normalize(colName)}_Range",
+                Expression = expr,
+                Description = $"{colName} must be between {range.Minimum} and {range.Maximum}",
+                ReferencedColumns = referenced
+            });
+        }
+
+        return result;
+    }
+    private static bool IsStringType(Type type) =>
+        type == typeof(string) || type == typeof(char);
+
+    private static List<IndexDefinition> GetIndexes(Type entityType)
     {
+        var entityName = entityType.Name;
         var indexes = new List<IndexDefinition>();
 
-        foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        var allAttrs = entityType.GetCustomAttributes(inherit: true);
+
+        foreach (var attr in allAttrs)
         {
-            var indexAttrs = prop.GetCustomAttributes<IndexAttribute>();
-            foreach (var attr in indexAttrs)
+            var typeName = attr.GetType().FullName;
+
+            if (typeName == "System.ComponentModel.DataAnnotations.Schema.IndexAttribute" ||
+                typeName == "Microsoft.EntityFrameworkCore.IndexAttribute")
             {
+                var name = attr.GetPropertyValue<string>("Name") ?? $"IX_{entityName}";
+                var isUnique = attr.GetPropertyValue<bool>("IsUnique");
+                var columns = attr.GetPropertyValue<IEnumerable<string>>("PropertyNames")?.ToList()
+                            ?? attr.GetPropertyValue<IEnumerable<string>>("Columns")?.ToList()
+                            ?? new List<string>();
+
+                var include = attr.GetPropertyValue<IEnumerable<string>>("IncludeProperties")?.ToList();
+                var filter = attr.GetPropertyValue<string>("Filter");
+                var description = attr.GetPropertyValue<string>("Description");
+                var isFullText = attr.GetPropertyValue<bool>("IsFullText");
+
+                if (columns.Count == 0) continue;
+
                 indexes.Add(new IndexDefinition
                 {
-                    Name = attr.Name ?? $"IX_{type.Name}_{prop.Name}",
-                    Columns = new List<string> { GetColumnName(prop) },
-                    IsUnique = attr.IsUnique
+                    Name = name ?? $"IX_{entityName}_{string.Join("_", columns)}",
+                    Columns = columns,
+                    IsUnique = isUnique,
+                    IncludeColumns = include,
+                    FilterExpression = filter,
+                    Description = description,
+                    IsFullText = isFullText
                 });
             }
         }
@@ -771,6 +861,67 @@ public partial class EntityDefinitionBuilder
         return indexes;
     }
 
+    public void BuildColumn(PropertyInfo prop, EntityDefinition entity)
+    {
+        // ✅ تجاهل الخصائص التنقلية (Navigation Properties)
+        if (IsCollectionOfEntity(prop) || IsReferenceToEntity(prop))
+            return;
+
+        var columnName = GetColumnName(prop);
+        var isNullable = IsNullable(prop);
+        var maxLength = GetMaxLength(prop);
+        var defaultValue = GetDefaultValue(prop);
+
+        var columnModel = new ColumnModel
+        {
+            Name = columnName,
+            PropertyType = prop.PropertyType,
+            IsNullable = isNullable,
+            MaxLength = maxLength,
+            DefaultValue = defaultValue
+        };
+
+        foreach (var handler in _handlers)
+            handler.Apply(prop, columnModel);
+
+        if (columnModel.IsIgnored) return;
+
+        var columnDef = ToColumnDefinition(columnModel);
+
+        // 🆕 نحدد خاصية IsNavigationProperty من البداية
+        columnDef.IsNavigationProperty = IsCollectionOfEntity(prop) || IsReferenceToEntity(prop);
+
+        if (prop.HasIdentityAttribute())
+            columnDef.IsIdentity = true;
+
+        var colDescAttr = prop.GetCustomAttribute<System.ComponentModel.DescriptionAttribute>();
+        if (colDescAttr != null && !string.IsNullOrWhiteSpace(colDescAttr.Description))
+            columnDef.Description = colDescAttr.Description;
+
+        Console.WriteLine($"[TRACE:ColumnInit] {entity.Name}.{columnDef.Name} → Identity={columnDef.IsIdentity}, Nullable={columnDef.IsNullable}, Type={columnDef.TypeName}");
+
+        entity.Columns.Add(columnDef);
+
+        // ✅ الأعمدة المحسوبة (Computed)
+        if (!string.IsNullOrWhiteSpace(columnModel.ComputedExpression))
+        {
+            var isIndexable = IsIndexableExpression(columnModel.ComputedExpression);
+            entity.ComputedColumns.Add(new ComputedColumnDefinition
+            {
+                Name = columnName,
+                Expression = columnModel.ComputedExpression,
+                IsIndexable = isIndexable
+            });
+
+            Console.WriteLine($"[TRACE:Computed] {columnName} → Expression={columnModel.ComputedExpression}, Indexable={isIndexable}");
+        }
+
+        // ✅ قيود CHECK
+        var checks = ToCheckConstraints(prop, entity.Name);
+        entity.CheckConstraints.AddRange(checks);
+        foreach (var ck in checks)
+            Console.WriteLine($"[TRACE:Check] {ck.Name} → {ck.Expression}");
+    }
     /// <summary>
     /// Converts index definitions from ColumnModel to IndexDefinition.
     /// </summary>
@@ -780,7 +931,11 @@ public partial class EntityDefinitionBuilder
         {
             Name = i.Name ?? $"IX_{entityName}_{model.Name}",
             Columns = new List<string> { model.Name },
-            IsUnique = i.IsUnique
+            IsUnique = i.IsUnique,
+            Description = i.Description,
+            IncludeColumns = i.IncludeColumns?.ToList(),
+            FilterExpression = i.FilterExpression,
+            IsFullText = i.IsFullText
         }).ToList();
 
         if (model.IsUnique)
@@ -789,12 +944,14 @@ public partial class EntityDefinitionBuilder
             {
                 Name = model.UniqueConstraintName ?? $"UQ_{entityName}_{model.Name}",
                 Columns = new List<string> { model.Name },
-                IsUnique = true
+                IsUnique = true,
+                Description = model.Description
             });
         }
 
         return indexes;
     }
+
 
 
 
@@ -897,81 +1054,10 @@ public partial class EntityDefinitionBuilder
             }
         }
     }
-    /// <summary>
-    /// Extracts unique constraints from [Unique] and [Index(IsUnique = true)] attributes.
-    /// Supports both property-level and class-level Index definitions.
-    /// </summary>
-    /// <param name="type">The entity type to inspect.</param>
-    /// <returns>List of unique constraint definitions.</returns>
-    private static List<UniqueConstraintDefinition> GetUniqueConstraints(Type type)
-    {
-        var uniqueConstraints = new List<UniqueConstraintDefinition>();
-        var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        // ✅ Property-level: [Unique] or [Index(IsUnique = true)]
-        foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
-        {
-            var columnName = prop.Name;
-
-            // [Unique] (custom)
-            if (prop.GetCustomAttribute<UniqueAttribute>() != null)
-            {
-                var key = $"UQ_{type.Name}_{columnName}";
-                if (seenKeys.Add(key))
-                {
-                    uniqueConstraints.Add(new UniqueConstraintDefinition
-                    {
-                        Name = key,
-                        Columns = new List<string> { columnName },
-                        IsAutoGenerated = true
-                    });
-                }
-            }
-
-            // [Index(IsUnique = true)] from EF Core
-            var indexAttrs = prop.GetCustomAttributes<IndexAttribute>();
-            foreach (var indexAttr in indexAttrs)
-            {
-                if (indexAttr.IsUnique)
-                {
-                    var name = indexAttr.Name ?? $"UQ_{type.Name}_{columnName}";
-                    if (seenKeys.Add(name))
-                    {
-                        uniqueConstraints.Add(new UniqueConstraintDefinition
-                        {
-                            Name = name,
-                            Columns = new List<string> { columnName },
-                            IsAutoGenerated = true
-                        });
-                    }
-                }
-            }
-        }
-
-        // ✅ Class-level: [Index(nameof(Column1), nameof(Column2), IsUnique = true)]
-        var classLevelIndexes = type.GetCustomAttributes<IndexAttribute>();
-        foreach (var indexAttr in classLevelIndexes)
-        {
-            if (indexAttr.IsUnique && indexAttr.Columns?.Length > 0)
-            {
-                var name = indexAttr.Name ?? $"UQ_{type.Name}_{string.Join("_", indexAttr.Columns)}";
-                if (seenKeys.Add(name))
-                {
-                    uniqueConstraints.Add(new UniqueConstraintDefinition
-                    {
-                        Name = name,
-                        Columns = indexAttr.Columns?.ToList(),
-                        IsAutoGenerated = true
-                    });
-                }
-            }
-        }
-
-        return uniqueConstraints;
-    }
 
 
-    
+
+
 
     private static void ValidateForeignKeys(EntityDefinition entity)
     {
@@ -1027,7 +1113,6 @@ public partial class EntityDefinitionBuilder
     {
             new KeyAttributeHandler(),
             new IndexAttributeHandler(),
-            new UniqueAttributeHandler(),
             new DefaultValueAttributeHandler(),
             new DescriptionAttributeHandler(),
             new RequiredAttributeHandler(),
