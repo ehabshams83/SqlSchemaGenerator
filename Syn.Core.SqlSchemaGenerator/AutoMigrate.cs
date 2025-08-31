@@ -2,6 +2,9 @@
 
 using Syn.Core.SqlSchemaGenerator.Models;
 
+using System.Text;
+using System.Text.RegularExpressions;
+
 namespace Syn.Core.SqlSchemaGenerator;
 
 /// <summary>
@@ -36,7 +39,9 @@ public class AutoMigrate
         bool previewOnly = false,
         bool autoMerge = false,
         bool showReport = false,
-        bool impactAnalysis = false)
+        bool impactAnalysis = false,
+        bool rollbackOnFailure = true,
+        bool autoExecuteRollback = false)
     {
         if (string.IsNullOrWhiteSpace(migrationScript))
         {
@@ -46,11 +51,17 @@ public class AutoMigrate
 
         var schema = newEntity?.Schema ?? "dbo";
         var commands = SplitSqlCommands(migrationScript);
+        var impact = impactAnalysis ? AnalyzeImpact(oldEntity, newEntity) : new();
+
+        AssignSeverityAndReason(impact);
+        RenderImpactMarkdown(impact);
+        RenderImpactHtml(impact);
+
 
         // 📋 Show Pre-Migration Report
         if (showReport)
         {
-            ShowPreMigrationReport(oldEntity, newEntity, commands, impactAnalysis);
+            ShowPreMigrationReport(oldEntity, newEntity, commands, impact, impactAnalysis);
             Console.WriteLine();
         }
 
@@ -58,8 +69,6 @@ public class AutoMigrate
         if (autoMerge)
         {
             Console.WriteLine("⚡ [AutoMigrate] Auto Merge mode: Checking if all changes are safe...");
-
-            // ✅ تمرير oldEntity و newEntity للتحليل
             var safety = AnalyzeMigrationSafety(commands, oldEntity, newEntity);
 
             if (safety.IsSafe)
@@ -69,6 +78,7 @@ public class AutoMigrate
                 Console.WriteLine("📜 Migration Script Preview:");
                 foreach (var cmd in commands)
                     Console.WriteLine(cmd + "\nGO\n");
+
                 ExecuteCommands(commands);
                 return;
             }
@@ -81,8 +91,6 @@ public class AutoMigrate
                 previewOnly = true;
             }
         }
-
-
 
         // 👀 Preview Mode
         if (previewOnly)
@@ -114,11 +122,270 @@ public class AutoMigrate
             Console.WriteLine(cmd + "\nGO\n");
 
         // 🚀 Execute Commands
-        ExecuteCommands(commands, interactive);
+        if (interactive)
+        {
+            ExecuteInteractiveAdvanced(
+                migrationScript,
+                oldEntity,
+                newEntity,
+                rollbackOnFailure,
+                autoExecuteRollback);
+        }
+        else
+        {
+            ExecuteCommands(commands);
+        }
     }
+
+    /// <summary>
+    /// Executes a migration script interactively, allowing step-by-step or batch execution,
+    /// with optional rollback, logging, and impact analysis.
+    /// </summary>
+    /// <param name="migrationScript">The full SQL migration script to execute.</param>
+    /// <param name="oldEntity">The previous version of the entity (used for rollback and impact analysis).</param>
+    /// <param name="newEntity">The updated version of the entity (used for rollback and impact analysis).</param>
+    /// <param name="rollbackOnFailure">If true, rolls back the transaction automatically on failure.</param>
+    /// <param name="autoExecuteRollback">If true, prompts the user to execute rollback script after failure.</param>
+    /// <param name="interactiveMode">Execution mode: "step" for command-by-command approval, "batch" for full execution.</param>
+    /// <param name="rollbackPreviewOnly">If true, displays the rollback script without executing it.</param>
+    /// <param name="logToFile">If true, saves execution log to "migration.log" in the current directory.</param>
+    public void ExecuteInteractiveAdvanced(
+        string migrationScript,
+        EntityDefinition oldEntity,
+        EntityDefinition newEntity,
+        bool rollbackOnFailure = true,
+        bool autoExecuteRollback = false,
+        string interactiveMode = "step",
+        bool rollbackPreviewOnly = false,
+        bool logToFile = false)
+    {
+        if (string.IsNullOrWhiteSpace(migrationScript))
+        {
+            Console.WriteLine("[Interactive] No SQL commands to process.");
+            return;
+        }
+
+        var commands = SplitSqlCommands(migrationScript);
+        var executed = new List<string>();
+        var log = new List<string>();
+
+        using var connection = new SqlConnection(_connectionString);
+        connection.Open();
+        using var transaction = connection.BeginTransaction();
+
+        Console.WriteLine("🧭 Starting Interactive Migration...");
+
+        if (interactiveMode == "batch")
+        {
+            Console.Write("Execute all commands in batch mode? (Y/N): ");
+            var batchConfirm = Console.ReadLine()?.Trim().ToUpperInvariant();
+            if (batchConfirm != "Y")
+            {
+                Console.WriteLine("❌ Batch execution cancelled.");
+                return;
+            }
+
+            foreach (var cmd in commands)
+            {
+                try
+                {
+                    using var sqlCommand = new SqlCommand(cmd, connection, transaction);
+                    sqlCommand.ExecuteNonQuery();
+                    executed.Add(cmd);
+                    log.Add($"✅ Executed: {cmd}");
+                }
+                catch (Exception ex)
+                {
+                    log.Add($"❌ Error: {ex.Message}");
+                    Console.WriteLine($"❌ Error: {ex.Message}");
+                    goto ROLLBACK;
+                }
+            }
+        }
+        else // step-by-step
+        {
+            foreach (var originalCmd in commands)
+            {
+                var cmd = originalCmd;
+
+                Console.WriteLine($"\n🔍 Next Command:\n{cmd}\n");
+                Console.Write("Execute this command? (Y/N/E): ");
+                var input = Console.ReadLine()?.Trim().ToUpperInvariant();
+
+                if (input == "E")
+                {
+                    Console.WriteLine("✏️ Enter modified SQL command:");
+                    var edited = Console.ReadLine();
+                    if (!string.IsNullOrWhiteSpace(edited))
+                    {
+                        cmd = edited;
+                        Console.WriteLine("🔄 Using modified command.");
+                    }
+                    else
+                    {
+                        Console.WriteLine("⏭️ Skipped due to empty input.");
+                        continue;
+                    }
+                }
+
+                if (input == "Y" || input == "E")
+                {
+                    try
+                    {
+                        using var sqlCommand = new SqlCommand(cmd, connection, transaction);
+                        sqlCommand.ExecuteNonQuery();
+                        executed.Add(cmd);
+                        log.Add($"✅ Executed: {cmd}");
+                    }
+                    catch (Exception ex)
+                    {
+                        log.Add($"❌ Error: {ex.Message}");
+                        Console.WriteLine($"❌ Error: {ex.Message}");
+                        goto ROLLBACK;
+                    }
+                }
+                else
+                {
+                    log.Add($"⏭️ Skipped: {cmd}");
+                    Console.WriteLine("⏭️ Skipped.");
+                }
+            }
+        }
+
+        transaction.Commit();
+        Console.WriteLine("\n✅ Interactive Migration Completed.");
+        Console.WriteLine($"✅ Commands Executed: {executed.Count} / {commands.Count}");
+
+        goto FINALIZE;
+
+    ROLLBACK:
+        transaction.Rollback();
+        Console.WriteLine("⏪ Transaction rolled back.");
+
+        var impact = AnalyzeImpact(oldEntity, newEntity);
+        AssignSeverityAndReason(impact);
+        var rollbackScript = GenerateRollbackScript(impact);
+
+        Console.WriteLine("📜 Suggested Rollback Script:");
+        foreach (var r in rollbackScript)
+            Console.WriteLine(r);
+
+        if (rollbackPreviewOnly)
+        {
+            Console.WriteLine("📝 Rollback preview only — no execution.");
+        }
+        else if (autoExecuteRollback)
+        {
+            Console.Write("Do you want to execute rollback now? (Y/N): ");
+            var rollbackInput = Console.ReadLine()?.Trim().ToUpperInvariant();
+            if (rollbackInput == "Y")
+            {
+                foreach (var r in rollbackScript)
+                {
+                    try
+                    {
+                        using var rollbackCmd = new SqlCommand(r, connection);
+                        rollbackCmd.ExecuteNonQuery();
+                        Console.WriteLine($"⏪ Executed rollback: {r}");
+                        log.Add($"⏪ Executed rollback: {r}");
+                    }
+                    catch (Exception rex)
+                    {
+                        Console.WriteLine($"❌ Rollback failed: {rex.Message}");
+                        log.Add($"❌ Rollback failed: {rex.Message}");
+                    }
+                }
+            }
+        }
+
+    FINALIZE:
+        if (logToFile)
+        {
+            File.WriteAllLines("migration.log", log);
+            Console.WriteLine("📁 Log saved to migration.log");
+        }
+    }    /// <summary>
 
 
     /// <summary>
+    /// Assigns severity level and explanatory reason to each impact item
+    /// based on its type and action.
+    /// </summary>
+    /// <param name="impact">The list of impact items to enrich.</param>
+    public void AssignSeverityAndReason(List<ImpactItem> impact)
+    {
+        foreach (var item in impact)
+        {
+            switch (item.Type)
+            {
+                case "Column":
+                    if (item.Action == "Dropped")
+                    {
+                        item.Severity = "High";
+                        item.Reason = "Dropping this column may lead to permanent data loss.";
+                    }
+                    else if (item.Action == "Modified" && item.NewType?.Contains("NOT NULL") == true)
+                    {
+                        item.Severity = "High";
+                        item.Reason = "Changing to NOT NULL may fail if existing rows contain NULL values.";
+                    }
+                    else if (item.Action == "Modified")
+                    {
+                        item.Severity = "Medium";
+                        item.Reason = "Altering column type may affect data compatibility or indexing.";
+                    }
+                    else if (item.Action == "Added")
+                    {
+                        item.Severity = "Low";
+                        item.Reason = "Adding a column is safe unless constraints are applied.";
+                    }
+                    break;
+
+                case "Constraint":
+                    if (item.Action == "Dropped" && item.Name.StartsWith("FK_", StringComparison.OrdinalIgnoreCase))
+                    {
+                        item.Severity = "High";
+                        item.Reason = "Dropping a foreign key may break relational integrity.";
+                    }
+                    else if (item.Action == "Added" && item.Name.StartsWith("FK_", StringComparison.OrdinalIgnoreCase))
+                    {
+                        item.Severity = "Medium";
+                        item.Reason = "Adding a foreign key may fail if existing data violates the relationship.";
+                    }
+                    else if (item.Action == "Modified")
+                    {
+                        item.Severity = "Medium";
+                        item.Reason = "Changing constraint logic may affect validation or inserts.";
+                    }
+                    else
+                    {
+                        item.Severity = "Low";
+                        item.Reason = "Adding or dropping a check constraint is usually safe.";
+                    }
+                    break;
+
+                case "Index":
+                    if (item.Action == "Dropped")
+                    {
+                        item.Severity = "Medium";
+                        item.Reason = "Dropping index may degrade query performance.";
+                    }
+                    else if (item.Action == "Modified")
+                    {
+                        item.Severity = "Medium";
+                        item.Reason = "Changing index structure may affect execution plans.";
+                    }
+                    else if (item.Action == "Added")
+                    {
+                        item.Severity = "Low";
+                        item.Reason = "Adding index improves performance but may increase write cost.";
+                    }
+                    break;
+            }
+        }
+    }
+
+
     /// Analyzes a list of SQL commands and returns a detailed safety report.
     /// </summary>
     /// <param name="commands">List of SQL commands to analyze.</param>
@@ -183,6 +450,19 @@ public class AutoMigrate
 
         return result;
     }
+
+    private void ExecuteCommand(string sql)
+    {
+        using var connection = new SqlConnection(_connectionString);
+        if (connection.State == System.Data.ConnectionState.Closed)
+        {
+            connection.Open();
+        }
+
+        using var command = new SqlCommand(sql, connection);
+        command.ExecuteNonQuery();
+    }
+
 
     private static string Norm(string s) => (s ?? "").Trim().ToLowerInvariant();
 
@@ -308,9 +588,20 @@ public class AutoMigrate
     }
 
     /// <summary>
-    /// Displays a detailed report of migration changes, including impact analysis.
+    /// Displays a detailed pre-migration report including new table structure,
+    /// grouped SQL commands, and impact analysis warnings.
     /// </summary>
-    private void ShowPreMigrationReport(EntityDefinition oldEntity, EntityDefinition newEntity, List<string> commands, bool impactAnalysis)
+    /// <param name="oldEntity">The original entity definition (null if new table).</param>
+    /// <param name="newEntity">The updated entity definition.</param>
+    /// <param name="commands">The list of SQL commands to be executed.</param>
+    /// <param name="impact">The list of impact items describing structural changes.</param>
+    /// <param name="impactAnalysis">Whether to include impact warnings in the report.</param>
+    public void ShowPreMigrationReport(
+        EntityDefinition oldEntity,
+        EntityDefinition newEntity,
+        List<string> commands,
+        List<ImpactItem> impact,
+        bool impactAnalysis)
     {
         Console.WriteLine("📋 Pre‑Migration Report");
         Console.WriteLine("===================================");
@@ -354,14 +645,108 @@ public class AutoMigrate
             GroupCommands("✅ CHECK Constraints", commands, "CHECK");
         }
 
-        if (impactAnalysis)
+        if (impactAnalysis && impact?.Any() == true)
         {
             Console.WriteLine("\n⚠️ Impact Analysis Warnings:");
-            AnalyzeImpact(commands);
+            Console.WriteLine("===================================");
+
+            foreach (var item in impact)
+            {
+                switch (item.Type)
+                {
+                    case "Column":
+                        if (item.Action == "Dropped")
+                            Console.WriteLine($"   - {item.Name}: Dropping this column may lead to data loss.");
+                        else if (item.Action == "Modified" && item.NewType?.Contains("NOT NULL") == true)
+                            Console.WriteLine($"   - {item.Name}: Changing to NOT NULL may fail if NULL values exist.");
+                        break;
+
+                    case "Constraint":
+                        if (item.Action == "Dropped" && item.Name.StartsWith("FK_", StringComparison.OrdinalIgnoreCase))
+                            Console.WriteLine($"   - {item.Name}: Dropping this FK may break relational integrity.");
+                        else if (item.Action == "Added" && item.Name.StartsWith("FK_", StringComparison.OrdinalIgnoreCase))
+                            Console.WriteLine($"   - {item.Name}: Adding a FK may fail if existing data violates the relationship.");
+                        break;
+
+                    case "Index":
+                        if (item.Action == "Dropped")
+                            Console.WriteLine($"   - {item.Name}: Dropping index may affect query performance.");
+                        else if (item.Action == "Modified")
+                            Console.WriteLine($"   - {item.Name}: Index structure changed — may affect execution plans.");
+                        break;
+                }
+            }
         }
 
         Console.WriteLine("===================================");
         Console.WriteLine($"Total commands: {commands.Count}");
+    }
+
+    public void RenderImpactMarkdown(List<ImpactItem> impact, string filePath = "impact.md")
+    {
+        var lines = new List<string>
+    {
+        "# 📋 Migration Impact Report",
+        "",
+        "| Type | Action | Table | Name | Severity | Reason |",
+        "|------|--------|-------|------|----------|--------|"
+    };
+
+        foreach (var item in impact)
+        {
+            lines.Add($"| {item.Type} | {item.Action} | {item.Table} | {item.Name} | {item.Severity ?? "-"} | {item.Reason ?? "-"} |");
+        }
+
+        lines.Add("");
+        lines.Add($"_Generated on {DateTime.Now:yyyy-MM-dd HH:mm}_");
+
+        File.WriteAllLines(filePath, lines);
+        Console.WriteLine($"📁 Markdown report saved to {filePath}");
+    }
+
+    public void RenderImpactHtml(List<ImpactItem> impact, string filePath = "impact.html")
+    {
+        var html = new StringBuilder();
+        html.AppendLine("<!DOCTYPE html>");
+        html.AppendLine("<html><head><meta charset='UTF-8'><title>Migration Impact Report</title>");
+        html.AppendLine("<style>");
+        html.AppendLine("body { font-family: Arial; margin: 20px; }");
+        html.AppendLine("table { border-collapse: collapse; width: 100%; }");
+        html.AppendLine("th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }");
+        html.AppendLine("th { background-color: #f2f2f2; }");
+        html.AppendLine(".high { background-color: #ffe5e5; }");
+        html.AppendLine(".medium { background-color: #fffbe5; }");
+        html.AppendLine(".low { background-color: #e5ffe5; }");
+        html.AppendLine("</style></head><body>");
+        html.AppendLine("<h1>📋 Migration Impact Report</h1>");
+        html.AppendLine("<table>");
+        html.AppendLine("<tr><th>Type</th><th>Action</th><th>Table</th><th>Name</th><th>Severity</th><th>Reason</th></tr>");
+
+        foreach (var item in impact)
+        {
+            var severityClass = item.Severity?.ToLowerInvariant() switch
+            {
+                "high" => "high",
+                "medium" => "medium",
+                "low" => "low",
+                _ => ""
+            };
+
+            html.AppendLine($"<tr class='{severityClass}'>" +
+                $"<td>{item.Type}</td>" +
+                $"<td>{item.Action}</td>" +
+                $"<td>{item.Table}</td>" +
+                $"<td>{item.Name}</td>" +
+                $"<td>{item.Severity ?? "-"}</td>" +
+                $"<td>{item.Reason ?? "-"}</td></tr>");
+        }
+
+        html.AppendLine("</table>");
+        html.AppendLine($"<p><em>Generated on {DateTime.Now:yyyy-MM-dd HH:mm}</em></p>");
+        html.AppendLine("</body></html>");
+
+        File.WriteAllText(filePath, html.ToString());
+        Console.WriteLine($"📁 HTML report saved to {filePath}");
     }
 
     private bool IsNewTable(EntityDefinition entity)
@@ -385,20 +770,172 @@ public class AutoMigrate
         }
     }
 
-    private void AnalyzeImpact(List<string> commands)
+    /// <summary>
+    /// Compares two versions of an entity and returns a list of structural differences,
+    /// including added, dropped, and modified columns, constraints, and indexes.
+    /// </summary>
+    /// <param name="oldEntity">The original entity definition before migration.</param>
+    /// <param name="newEntity">The updated entity definition after migration.</param>
+    /// <returns>A list of impact items describing the detected changes.</returns>
+    public List<ImpactItem> AnalyzeImpact(EntityDefinition oldEntity, EntityDefinition newEntity)
     {
-        foreach (var cmd in commands)
+        var impact = new List<ImpactItem>();
+
+        // 🔹 Columns
+        var oldColumns = oldEntity?.Columns.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase) ?? new();
+        var newColumns = newEntity?.Columns.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase) ?? new();
+
+        foreach (var kvp in newColumns)
         {
-            var upper = cmd.ToUpperInvariant();
-            if (upper.Contains("DROP COLUMN"))
-                Console.WriteLine($"   - {ExtractName(cmd)}: Dropping this column may lead to data loss.");
-            if (upper.Contains("DROP CONSTRAINT") && upper.Contains("FK_"))
-                Console.WriteLine($"   - {ExtractName(cmd)}: Dropping this FK may break relational integrity.");
-            if (upper.Contains("ADD CONSTRAINT") && upper.Contains("FOREIGN KEY"))
-                Console.WriteLine($"   - {ExtractName(cmd)}: Adding a FK may fail if existing data violates the relationship.");
-            if (upper.Contains("ALTER COLUMN") && upper.Contains("NOT NULL"))
-                Console.WriteLine($"   - {ExtractName(cmd)}: Changing to NOT NULL may fail if NULL values exist.");
+            var name = kvp.Key;
+            var newCol = kvp.Value;
+
+            if (!oldColumns.ContainsKey(name))
+            {
+                impact.Add(new ImpactItem
+                {
+                    Type = "Column",
+                    Action = "Added",
+                    Table = newEntity.Name,
+                    Name = name
+                });
+            }
+            else
+            {
+                var oldCol = oldColumns[name];
+                if (oldCol.TypeName != newCol.TypeName || oldCol.IsNullable != newCol.IsNullable)
+                {
+                    impact.Add(new ImpactItem
+                    {
+                        Type = "Column",
+                        Action = "Modified",
+                        Table = newEntity.Name,
+                        Name = name,
+                        OriginalType = $"{oldCol.TypeName} {(oldCol.IsNullable ? "NULL" : "NOT NULL")}",
+                        NewType = $"{newCol.TypeName} {(newCol.IsNullable ? "NULL" : "NOT NULL")}"
+                    });
+                }
+            }
         }
+
+        foreach (var name in oldColumns.Keys)
+        {
+            if (!newColumns.ContainsKey(name))
+            {
+                impact.Add(new ImpactItem
+                {
+                    Type = "Column",
+                    Action = "Dropped",
+                    Table = oldEntity.Name,
+                    Name = name
+                });
+            }
+        }
+
+        // 🔹 Check Constraints
+        var oldChecks = oldEntity?.CheckConstraints.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase) ?? new();
+        var newChecks = newEntity?.CheckConstraints.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase) ?? new();
+
+        foreach (var kvp in newChecks)
+        {
+            var name = kvp.Key;
+            var newCheck = kvp.Value;
+
+            if (!oldChecks.ContainsKey(name))
+            {
+                impact.Add(new ImpactItem
+                {
+                    Type = "Constraint",
+                    Action = "Added",
+                    Table = newEntity.Name,
+                    Name = name
+                });
+            }
+            else
+            {
+                var oldCheck = oldChecks[name];
+                if (NormalizeExpression(oldCheck.Expression) != NormalizeExpression(newCheck.Expression))
+                {
+                    impact.Add(new ImpactItem
+                    {
+                        Type = "Constraint",
+                        Action = "Modified",
+                        Table = newEntity.Name,
+                        Name = name
+                    });
+                }
+            }
+        }
+
+        foreach (var name in oldChecks.Keys)
+        {
+            if (!newChecks.ContainsKey(name))
+            {
+                impact.Add(new ImpactItem
+                {
+                    Type = "Constraint",
+                    Action = "Dropped",
+                    Table = oldEntity.Name,
+                    Name = name
+                });
+            }
+        }
+
+        // 🔹 Indexes
+        var oldIndexes = oldEntity?.Indexes.ToDictionary(i => i.Name, StringComparer.OrdinalIgnoreCase) ?? new();
+        var newIndexes = newEntity?.Indexes.ToDictionary(i => i.Name, StringComparer.OrdinalIgnoreCase) ?? new();
+
+        foreach (var kvp in newIndexes)
+        {
+            var name = kvp.Key;
+            var newIndex = kvp.Value;
+
+            if (!oldIndexes.ContainsKey(name))
+            {
+                impact.Add(new ImpactItem
+                {
+                    Type = "Index",
+                    Action = "Added",
+                    Table = newEntity.Name,
+                    Name = name
+                });
+            }
+            else
+            {
+                var oldIndex = oldIndexes[name];
+                if (!oldIndex.Columns.SequenceEqual(newIndex.Columns, StringComparer.OrdinalIgnoreCase))
+                {
+                    impact.Add(new ImpactItem
+                    {
+                        Type = "Index",
+                        Action = "Modified",
+                        Table = newEntity.Name,
+                        Name = name
+                    });
+                }
+            }
+        }
+
+        foreach (var name in oldIndexes.Keys)
+        {
+            if (!newIndexes.ContainsKey(name))
+            {
+                impact.Add(new ImpactItem
+                {
+                    Type = "Index",
+                    Action = "Dropped",
+                    Table = oldEntity.Name,
+                    Name = name
+                });
+            }
+        }
+
+        return impact;
+    }
+
+    private string NormalizeExpression(string expr)
+    {
+        return Regex.Replace(expr ?? "", @"\s+", "").ToLowerInvariant();
     }
 
     private string ExtractName(string cmd)
@@ -513,7 +1050,7 @@ END";
     }
 
 
-    private List<string> SplitSqlCommands(string script)
+    public List<string> SplitSqlCommands(string script)
     {
         return script
             .Replace("\r", "")
@@ -521,6 +1058,80 @@ END";
             .Select(cmd => cmd.Trim())
             .Where(cmd => !string.IsNullOrWhiteSpace(cmd))
             .ToList();
+    }
+
+    /// <summary>
+    /// Generates a rollback SQL script based on a list of impact items,
+    /// reversing added columns, constraints, and indexes, and restoring modified columns.
+    /// </summary>
+    /// <param name="impact">The list of impact items generated from entity comparison.</param>
+    /// <returns>A list of SQL commands that can be used to revert the migration.</returns>
+    private List<string> GenerateRollbackScript(List<ImpactItem> impact)
+    {
+        var rollback = new List<string>();
+
+        foreach (var item in impact)
+        {
+            switch (item.Type)
+            {
+                case "Column":
+                    if (item.Action == "Added")
+                    {
+                        rollback.Add($"ALTER TABLE [{item.Table}] DROP COLUMN [{item.Name}];");
+                    }
+                    else if (item.Action == "Modified" && item.OriginalType != null)
+                    {
+                        rollback.Add($"ALTER TABLE [{item.Table}] ALTER COLUMN [{item.Name}] {item.OriginalType};");
+                    }
+                    break;
+
+                case "Constraint":
+                    if (item.Action == "Added")
+                    {
+                        rollback.Add($"ALTER TABLE [{item.Table}] DROP CONSTRAINT [{item.Name}];");
+                    }
+                    break;
+
+                case "Index":
+                    if (item.Action == "Added")
+                    {
+                        rollback.Add($"DROP INDEX [{item.Name}] ON [{item.Table}];");
+                    }
+                    break;
+            }
+        }
+
+        return rollback;
+    }
+    private string ExtractTableName(string sql)
+    {
+        var match = Regex.Match(sql, @"TABLE\s+\[?(\w+)\]?\.\[?(\w+)\]?", RegexOptions.IgnoreCase);
+        if (match.Success)
+            return $"[{match.Groups[1].Value}].[{match.Groups[2].Value}]";
+
+        match = Regex.Match(sql, @"TABLE\s+\[?(\w+)\]?", RegexOptions.IgnoreCase);
+        if (match.Success)
+            return $"[{match.Groups[1].Value}]";
+
+        return "UNKNOWN_TABLE";
+    }
+
+    private string ExtractColumnName(string sql)
+    {
+        var match = Regex.Match(sql, @"ADD\s+\[?(\w+)\]?\s", RegexOptions.IgnoreCase);
+        return match.Success ? $"[{match.Groups[1].Value}]" : "UNKNOWN_COLUMN";
+    }
+
+    private string ExtractConstraintName(string sql)
+    {
+        var match = Regex.Match(sql, @"CONSTRAINT\s+\[?(\w+)\]?", RegexOptions.IgnoreCase);
+        return match.Success ? $"[{match.Groups[1].Value}]" : "UNKNOWN_CONSTRAINT";
+    }
+
+    private string ExtractIndexName(string sql)
+    {
+        var match = Regex.Match(sql, @"INDEX\s+\[?(\w+)\]?", RegexOptions.IgnoreCase);
+        return match.Success ? $"[{match.Groups[1].Value}]" : "UNKNOWN_INDEX";
     }
 
     /// <summary>

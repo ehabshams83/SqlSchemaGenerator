@@ -49,6 +49,135 @@ public class MigrationRunner
     }
 
     /// <summary>
+    /// Runs a migration session for a list of CLR entity types.
+    /// Compares each entity with its database version, generates migration script,
+    /// analyzes impact and safety, shows detailed reports, and optionally executes interactively.
+    /// </summary>
+    public void RunMigrationSession(
+        IEnumerable<Type> entityTypes,
+        bool execute = true,
+        bool dryRun = false,
+        bool interactive = false,
+        bool previewOnly = false,
+        bool autoMerge = false,
+        bool showReport = false,
+        bool impactAnalysis = false,
+        bool rollbackOnFailure = true,
+        bool autoExecuteRollback = false,
+        string interactiveMode = "step",
+        bool rollbackPreviewOnly = false,
+        bool logToFile = false)
+    {
+        Console.WriteLine("=== Migration Runner Started ===");
+
+        int newTables = 0;
+        int alteredTables = 0;
+        int unchangedTables = 0;
+
+        foreach (var entityType in entityTypes)
+        {
+            Console.WriteLine($"\n[RUNNER] Processing entity: {entityType.Name}");
+
+            try
+            {
+                var oldEntity = LoadEntityFromDatabase(entityType);
+                var newEntity = _entityDefinitionBuilder.Build(entityType);
+
+                var script = _migrationService.BuildMigrationScript(
+                    oldEntity,
+                    newEntity,
+                    execute: false,
+                    dryRun,
+                    interactive,
+                    previewOnly,
+                    autoMerge,
+                    showReport,
+                    impactAnalysis);
+
+                var commands = _autoMigrate.SplitSqlCommands(script);
+                var impact = impactAnalysis ? _autoMigrate.AnalyzeImpact(oldEntity, newEntity) : new();
+                if (impactAnalysis) _autoMigrate.AssignSeverityAndReason(impact);
+
+                // 🧠 Safety Analysis
+                var safety = _migrationService.AnalyzeMigrationSafety(script);
+
+                Console.WriteLine("\n🔍 Migration Safety Analysis:");
+                if (safety.IsSafe)
+                {
+                    Console.WriteLine("✅ All commands are safe.");
+                }
+                else
+                {
+                    Console.WriteLine("⚠️ Unsafe commands detected:");
+                    foreach (var reason in safety.Reasons)
+                        Console.WriteLine($"   - {reason}");
+                }
+
+                // 📋 Show Report
+                if (showReport)
+                {
+                    _autoMigrate.ShowPreMigrationReport(oldEntity, newEntity, commands, impact, impactAnalysis);
+                    Console.WriteLine();
+                }
+
+                // 🧮 Classification
+                if (string.IsNullOrWhiteSpace(script) || script.Contains("-- No changes detected."))
+                {
+                    unchangedTables++;
+                }
+                else if (oldEntity.Columns.Count == 0 && oldEntity.Constraints.Count == 0)
+                {
+                    newTables++;
+                }
+                else
+                {
+                    alteredTables++;
+                }
+
+                // 🚀 Execute if approved
+                if (execute)
+                {
+                    if (interactive)
+                    {
+                        _autoMigrate.ExecuteInteractiveAdvanced(
+                            script,
+                            oldEntity,
+                            newEntity,
+                            rollbackOnFailure,
+                            autoExecuteRollback,
+                            interactiveMode,
+                            rollbackPreviewOnly,
+                            logToFile);
+                    }
+                    else
+                    {
+                        _autoMigrate.Execute(
+                            script,
+                            oldEntity,
+                            newEntity,
+                            dryRun,
+                            interactive,
+                            previewOnly,
+                            autoMerge,
+                            showReport,
+                            impactAnalysis);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ [RUNNER] Migration failed for {entityType.Name}: {ex.Message}");
+            }
+        }
+
+        Console.WriteLine("\n=== Migration Runner Completed ===");
+        Console.WriteLine("📊 Summary:");
+        Console.WriteLine($"🆕 New tables created: {newTables}");
+        Console.WriteLine($"🔧 Tables altered: {alteredTables}");
+        Console.WriteLine($"✅ Unchanged tables: {unchangedTables}");
+    }
+
+    /// <summary>
     /// Loads the current EntityDefinition from the database for a given CLR type.
     /// Extracts schema and table name from attributes if available.
     /// If the table is missing, returns an empty placeholder to treat it as new.
@@ -78,105 +207,6 @@ public class MigrationRunner
         return entity;
     }
 
-    /// <summary>
-    /// Runs a migration session for a list of CLR entity types.
-    /// Compares each entity with its database version, generates migration script,
-    /// shows detailed reports, analyzes safety, and optionally executes.
-    /// </summary>
-    public void RunMigrationSession(
-        IEnumerable<Type> entityTypes,
-        bool execute = true,
-        bool dryRun = false,
-        bool interactive = false,
-        bool previewOnly = false,
-        bool autoMerge = false,
-        bool showReport = false,
-        bool impactAnalysis = false)
-    {
-        Console.WriteLine("=== Migration Runner Started ===");
-
-        int newTables = 0;
-        int alteredTables = 0;
-        int unchangedTables = 0;
-
-        foreach (var entityType in entityTypes)
-        {
-            Console.WriteLine($"\n[RUNNER] Processing entity: {entityType.Name}");
-
-            try
-            {
-                var oldEntity = LoadEntityFromDatabase(entityType);
-                var newEntity = _entityDefinitionBuilder.Build(entityType);
-
-                var script = _migrationService.BuildMigrationScript(
-                    oldEntity,
-                    newEntity,
-                    execute: false, // defer execution until after safety check
-                    dryRun,
-                    interactive,
-                    previewOnly,
-                    autoMerge,
-                    showReport,
-                    impactAnalysis
-                );
-
-                // 🧠 Safety Analysis
-                var safety = _migrationService.AnalyzeMigrationSafety(script);
-
-                Console.WriteLine("\n🔍 Migration Safety Analysis:");
-                if (safety.IsSafe)
-                {
-                    Console.WriteLine("✅ All commands are safe.");
-                }
-                else
-                {
-                    Console.WriteLine("⚠️ Unsafe commands detected:");
-                    foreach (var reason in safety.Reasons)
-                        Console.WriteLine($"   - {reason}");
-                }
-
-                // 🧮 Classification
-                if (string.IsNullOrWhiteSpace(script) || script.Contains("-- No changes detected."))
-                {
-                    unchangedTables++;
-                }
-                else if (oldEntity.Columns.Count == 0 && oldEntity.Constraints.Count == 0)
-                {
-                    newTables++;
-                }
-                else
-                {
-                    alteredTables++;
-                }
-
-                // 🚀 Execute if approved
-                if (execute)
-                {
-                    _autoMigrate.Execute(
-                        script,
-                        oldEntity,
-                        newEntity,
-                        dryRun,
-                        interactive,
-                        previewOnly,
-                        autoMerge,
-                        showReport,
-                        impactAnalysis
-                    );
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"❌ [RUNNER] Migration failed for {entityType.Name}: {ex.Message}");
-            }
-        }
-
-        Console.WriteLine("\n=== Migration Runner Completed ===");
-        Console.WriteLine("📊 Summary:");
-        Console.WriteLine($"🆕 New tables created: {newTables}");
-        Console.WriteLine($"🔧 Tables altered: {alteredTables}");
-        Console.WriteLine($"✅ Unchanged tables: {unchangedTables}");
-    }
 }
 
 
