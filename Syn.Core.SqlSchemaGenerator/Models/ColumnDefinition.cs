@@ -6,6 +6,8 @@
 /// </summary>
 public class ColumnDefinition
 {
+    // 🔹 Core Properties
+
     /// <summary>The name of the column.</summary>
     public string Name { get; set; }
 
@@ -30,8 +32,13 @@ public class ColumnDefinition
     /// <summary>Optional computed expression for virtual columns.</summary>
     public string? ComputedExpression { get; set; }
 
-    /// <summary>Optional description of the column, used for documentation or extended properties.</summary>
-    public string? Description { get; set; }
+    /// <summary>Optional ordering value used to control column position in generated SQL.</summary>
+    public int? Order { get; set; }
+
+    /// <summary>Optional comment or annotation for the column.</summary>
+    public string? Comment { get; set; }
+
+    // 🔹 Constraints & Identity
 
     /// <summary>Indicates whether the column is an identity column.</summary>
     public bool IsIdentity { get; set; }
@@ -45,29 +52,41 @@ public class ColumnDefinition
     /// <summary>The name of the unique constraint, if explicitly defined.</summary>
     public string? UniqueConstraintName { get; set; }
 
+    /// <summary>A list of check constraints applied to this column.</summary>
+    public List<CheckConstraintDefinition> CheckConstraints { get; set; } = new();
+
+    // 🔹 Indexing
+
     /// <summary>A list of indexes that include this column.</summary>
     public List<IndexDefinition> Indexes { get; set; } = new();
 
-    /// <summary>A list of check constraints applied to this column.</summary>
-    public List<CheckConstraintDefinition> CheckConstraints { get; set; } = new();
+    /// <summary>
+    /// Indicates whether this column type is valid for indexing.
+    /// </summary>
+    public bool IsIndexable =>
+        !TypeName.Contains("max", StringComparison.OrdinalIgnoreCase) &&
+        !TypeName.Contains("text", StringComparison.OrdinalIgnoreCase) &&
+        !TypeName.Contains("image", StringComparison.OrdinalIgnoreCase);
+
+    // 🔹 Foreign Key & Navigation
+
+    /// <summary>Indicates whether the column is a foreign key.</summary>
+    public bool IsForeignKey { get; set; }
+
+    /// <summary>The target entity name for the foreign key relationship.</summary>
+    public string? ForeignKeyTarget { get; set; }
+
+    /// <summary>Indicates whether this column represents a navigation property.</summary>
+    public bool IsNavigationProperty { get; set; }
+
+    // 🔹 Metadata & Control
 
     /// <summary>Indicates whether the column should be excluded from SQL generation.</summary>
     public bool IsIgnored { get; set; }
 
     /// <summary>Optional reason for ignoring the column.</summary>
     public string? IgnoreReason { get; set; }
-    /// <summary>
-    /// Indicates whether the column is a foreign key.
-    /// </summary>
-    public bool IsForeignKey { get; set; }
 
-    /// <summary>Optional ordering value used to control column position in generated SQL.</summary>
-    public int? Order { get; set; }
-    public string? Comment { get; set; }
-    /// <summary>
-    /// The target entity name for the foreign key relationship.
-    /// </summary>
-    public string? ForeignKeyTarget { get; set; }
-    public bool IsNavigationProperty { get; set; }
-
+    /// <summary>Optional description of the column, used for documentation or extended properties.</summary>
+    public string? Description { get; set; }
 }

@@ -34,18 +34,61 @@ namespace Syn.Core.SqlSchemaGenerator.Builders
         public string BuildCreate(Type entityType)
         {
             if (entityType == null) throw new ArgumentNullException(nameof(entityType));
-            return BuildCreate(_entityDefinitionBuilder.Build(entityType));
+            return BuildCreate(_entityDefinitionBuilder
+                .BuildAllWithRelationships(new[] { entityType })
+                .First());
         }
 
         /// <summary>
-        /// Generates DROP CHECK constraint scripts from a CLR type.
+        /// Generates DROP CHECK constraint scripts for a given entity type.
+        /// Uses BuildAllWithRelationships to ensure relationships and indexes are included.
         /// </summary>
+        /// <param name="entityType">The CLR type representing the entity.</param>
+        /// <returns>SQL script to drop all CHECK constraints for the entity.</returns>
         public string BuildDrop(Type entityType)
         {
             if (entityType == null) throw new ArgumentNullException(nameof(entityType));
-            return BuildDrop(_entityDefinitionBuilder.Build(entityType));
+
+            // ✅ بناء الكيان الجديد في سياق العلاقات والفهارس
+            var entity = _entityDefinitionBuilder
+                .BuildAllWithRelationships(new[] { entityType })
+                .First();
+
+            return BuildDrop(entity);
         }
 
+        /// <summary>
+        /// Generates DROP CHECK constraint scripts from an EntityDefinition.
+        /// Adds IF EXISTS safety checks for each constraint.
+        /// </summary>
+        /// <param name="entity">The entity definition containing CHECK constraints.</param>
+        /// <returns>SQL script to drop all CHECK constraints for the entity.</returns>
+        public string BuildDrop(EntityDefinition entity)
+        {
+            if (entity == null) throw new ArgumentNullException(nameof(entity));
+            if (entity.CheckConstraints == null || !entity.CheckConstraints.Any()) return string.Empty;
+
+            var schema = string.IsNullOrWhiteSpace(entity.Schema) ? "dbo" : entity.Schema;
+            var sb = new StringBuilder();
+
+            foreach (var c in entity.CheckConstraints)
+            {
+                sb.AppendLine($@"
+IF EXISTS (
+    SELECT 1
+    FROM sys.check_constraints cc
+    WHERE cc.name = N'{EscapeSqlLiteral(c.Name)}'
+      AND cc.parent_object_id = OBJECT_ID(N'[{schema}].[{entity.Name}]')
+)
+BEGIN
+    ALTER TABLE [{schema}].[{entity.Name}] DROP CONSTRAINT [{c.Name}];
+END;
+".Trim());
+                sb.AppendLine();
+            }
+
+            return sb.ToString().Trim();
+        }
 
 
 
@@ -292,118 +335,6 @@ ON [{schema}].[{entity.Name}]([{comp.Name}]);");
         {
             var match = Regex.Match(expr, @"\[(\w+)\]");
             return match.Success ? match.Groups[1].Value : null;
-        }
-
-        //        /// Builds SQL ALTER TABLE statements to create all constraints for an entity.
-        //        /// Includes CHECK, FOREIGN KEY, and UNIQUE constraints, with optional extended descriptions.
-        //        /// </summary>
-        //        public string BuildCreate(EntityDefinition entity)
-        //        {
-        //            if (entity == null) throw new ArgumentNullException(nameof(entity));
-
-        //            var schema = string.IsNullOrWhiteSpace(entity.Schema) ? "dbo" : entity.Schema;
-        //            var sb = new StringBuilder();
-
-        //            // 🔹 CHECK constraints
-        //            if (entity.CheckConstraints != null)
-        //            {
-        //                foreach (var c in entity.CheckConstraints)
-        //                {
-        //                    sb.AppendLine($@"
-        //IF NOT EXISTS (
-        //    SELECT 1
-        //    FROM sys.check_constraints cc
-        //    WHERE cc.name = N'{EscapeSqlLiteral(c.Name)}'
-        //      AND cc.parent_object_id = OBJECT_ID(N'[{schema}].[{entity.Name}]')
-        //)
-        //BEGIN
-        //    ALTER TABLE [{schema}].[{entity.Name}] 
-        //        ADD CONSTRAINT [{c.Name}] CHECK ({c.Expression});
-        //END;");
-
-        //                    if (!string.IsNullOrWhiteSpace(c.Description))
-        //                    {
-        //                        sb.AppendLine($@"
-        //EXEC sys.sp_addextendedproperty 
-        //    @name = N'MS_Description',
-        //    @value = N'{EscapeSqlLiteral(c.Description)}',
-        //    @level0type = N'SCHEMA',    @level0name = N'{EscapeSqlLiteral(schema)}',
-        //    @level1type = N'TABLE',     @level1name = N'{EscapeSqlLiteral(entity.Name)}',
-        //    @level2type = N'CONSTRAINT',@level2name = N'{EscapeSqlLiteral(c.Name)}';");
-        //                    }
-
-        //                    sb.AppendLine();
-        //                }
-        //            }
-
-        //            // 🔹 UNIQUE constraints from One-to-One relationships
-        //            if (entity.Relationships != null)
-        //            {
-        //                foreach (var rel in entity.Relationships.Where(r => r.Type == RelationshipType.OneToOne))
-        //                {
-        //                    var fkColumn = $"{rel.SourceEntity}Id";
-
-        //                    sb.AppendLine($@"
-        //ALTER TABLE [{schema}].[{rel.TargetEntity}]
-        //ADD CONSTRAINT [FK_{rel.TargetEntity}_{fkColumn}]
-        //FOREIGN KEY ([{fkColumn}])
-        //REFERENCES [{schema}].[{rel.SourceEntity}]([Id]);");
-
-        //                    sb.AppendLine($@"
-        //ALTER TABLE [{schema}].[{rel.TargetEntity}]
-        //ADD CONSTRAINT [UQ_{rel.TargetEntity}_{fkColumn}]
-        //UNIQUE ([{fkColumn}]);");
-        //                }
-        //            }
-
-        //            // 🔹 FOREIGN KEY constraints from ForeignKeys
-        //            if (entity.ForeignKeys != null)
-        //            {
-        //                foreach (var fk in entity.ForeignKeys)
-        //                {
-        //                    var referencedColumn = fk.ReferencedColumn ?? "Id";
-
-        //                    sb.AppendLine($@"
-        //ALTER TABLE [{schema}].[{entity.Name}]
-        //ADD CONSTRAINT [{fk.ConstraintName}]
-        //FOREIGN KEY ([{fk.Column}])
-        //REFERENCES [{schema}].[{fk.ReferencedTable}]([{referencedColumn}]);");
-        //                }
-        //            }
-
-        //            return sb.ToString().Trim();
-        //        }
-
-
-        /// <summary>
-        /// Generates DROP CHECK constraint scripts from an <see cref="EntityDefinition"/>.
-        /// Adds IF EXISTS safety checks.
-        /// </summary>
-        public string BuildDrop(EntityDefinition entity)
-        {
-            if (entity == null) throw new ArgumentNullException(nameof(entity));
-            if (entity.CheckConstraints == null || !entity.CheckConstraints.Any()) return string.Empty;
-
-            var schema = string.IsNullOrWhiteSpace(entity.Schema) ? "dbo" : entity.Schema;
-            var sb = new StringBuilder();
-
-            foreach (var c in entity.CheckConstraints)
-            {
-                sb.AppendLine($@"
-IF EXISTS (
-    SELECT 1
-    FROM sys.check_constraints cc
-    WHERE cc.name = N'{EscapeSqlLiteral(c.Name)}'
-      AND cc.parent_object_id = OBJECT_ID(N'[{schema}].[{entity.Name}]')
-)
-BEGIN
-    ALTER TABLE [{schema}].[{entity.Name}] DROP CONSTRAINT [{c.Name}];
-END;
-".Trim());
-                sb.AppendLine();
-            }
-
-            return sb.ToString().Trim();
         }
 
         /// <summary>

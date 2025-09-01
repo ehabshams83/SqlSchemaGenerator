@@ -26,7 +26,9 @@ namespace Syn.Core.SqlSchemaGenerator.Builders
         public string Build(Type entityType)
         {
             if (entityType == null) throw new ArgumentNullException(nameof(entityType));
-            var entityDef = _entityDefinitionBuilder.Build(entityType);
+            var entityDef = _entityDefinitionBuilder
+                .BuildAllWithRelationships(new[] { entityType })
+                .First();
             return Build(entityDef);
         }
 

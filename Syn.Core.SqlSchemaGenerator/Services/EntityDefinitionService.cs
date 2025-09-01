@@ -39,7 +39,7 @@ public class EntityDefinitionService
     public EntityDefinition BuildFull(Type entityType)
     {
         // 1) Build definition from code (attributes, handlers)
-        var entity = _builder.Build(entityType);
+        var entity = _builder.BuildAllWithRelationships(new[] { entityType }).First();
 
         // 2) Enrich with actual DB constraints and checks
         _schemaReader.ReadConstraintsAndChecks(entity);

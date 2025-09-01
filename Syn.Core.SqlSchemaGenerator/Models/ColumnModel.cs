@@ -134,5 +134,5 @@ public class ColumnModel
     public string? ForeignKeyTable { get; set; }
     public string? ForeignKeyColumn { get; set; }
 
-
+    public string Comment { get; set; }  
 }

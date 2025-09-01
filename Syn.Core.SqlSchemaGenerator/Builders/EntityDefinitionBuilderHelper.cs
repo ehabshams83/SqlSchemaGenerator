@@ -2,7 +2,9 @@
 using Syn.Core.SqlSchemaGenerator.Models;
 
 using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 using System.Reflection;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace Syn.Core.SqlSchemaGenerator.Builders;
@@ -606,6 +608,225 @@ public partial class EntityDefinitionBuilder
             return true;
 
         return false;
+    }
+
+
+    private void ResolveForeignKeys(List<EntityDefinition> entities)
+    {
+        foreach (var entity in entities)
+        {
+            foreach (var fk in entity.ForeignKeys)
+            {
+                if (string.IsNullOrWhiteSpace(fk.ReferencedTable))
+                {
+                    var targetEntity = entities.FirstOrDefault(e =>
+                        e.Columns.Any(c =>
+                            c.Name.Equals(fk.ReferencedColumn, StringComparison.OrdinalIgnoreCase)));
+
+                    if (targetEntity != null)
+                    {
+                        fk.ReferencedTable = targetEntity.Name;
+
+                        if (string.IsNullOrWhiteSpace(fk.ReferencedColumn) || fk.ReferencedColumn == "Id")
+                        {
+                            var pkCol = targetEntity.Columns.FirstOrDefault(c => c.IsPrimaryKey);
+                            if (pkCol != null)
+                                fk.ReferencedColumn = pkCol.Name;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// يبني قائمة المفاتيح الأجنبية (Foreign Keys) لكيان معين.
+    /// يعتمد على EF Core ForeignKeyAttribute أو الاستنتاج الذاتي من أسماء الأعمدة والـ Navigation.
+    /// </summary>
+    /// <summary>
+    /// يبني قائمة المفاتيح الأجنبية (Foreign Keys) لكيان معين.
+    /// يعتمد على EF Core ForeignKeyAttribute أو الاستنتاج الذاتي من أسماء الأعمدة والـ Navigation.
+    /// ويكمل بيانات الجدول والعمود الهدف باستخدام Reflection على نوع الـ Navigation.
+    /// </summary>
+    internal static List<ForeignKeyDefinition> BuildForeignKeys(Type entityType, string entityName)
+    {
+        var foreignKeys = new List<ForeignKeyDefinition>();
+
+        foreach (var prop in entityType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        {
+            // 1️⃣ حالة وجود ForeignKeyAttribute من EF Core
+            var efFkAttr = prop.GetCustomAttribute<ForeignKeyAttribute>();
+            if (efFkAttr != null)
+            {
+                foreignKeys.Add(new ForeignKeyDefinition
+                {
+                    Column = prop.Name,
+                    ReferencedTable = null, // هنكمله لو فيه Navigation
+                    ReferencedColumn = efFkAttr.Name ?? "Id",
+                    OnDelete = ReferentialAction.Cascade,
+                    OnUpdate = ReferentialAction.NoAction,
+                    ConstraintName = $"FK_{entityName}_{prop.Name}"
+                });
+                continue;
+            }
+
+            // 2️⃣ حالة اسم العمود بينتهي بـ Id (مثال: CustomerId)
+            if (prop.Name.EndsWith("Id", StringComparison.OrdinalIgnoreCase))
+            {
+                var baseName = prop.Name.Substring(0, prop.Name.Length - 2);
+
+                // نحاول نلاقي Navigation Property بنفس الاسم
+                var navProp = entityType.GetProperties()
+                    .FirstOrDefault(p => p.Name.Equals(baseName, StringComparison.OrdinalIgnoreCase));
+
+                if (navProp != null)
+                {
+                    // اسم الجدول الهدف من [Table] أو اسم الكلاس
+                    var tableAttr = navProp.PropertyType.GetCustomAttribute<TableAttribute>();
+                    var targetTable = tableAttr != null ? tableAttr.Name : navProp.PropertyType.Name;
+
+                    // العمود الهدف (PK) من [Key] أو أول عمود PK
+                    var pkProp = navProp.PropertyType
+                        .GetProperties()
+                        .FirstOrDefault(p => p.GetCustomAttribute<KeyAttribute>() != null);
+
+                    var targetColumn = pkProp != null ? pkProp.Name : "Id";
+
+                    foreignKeys.Add(new ForeignKeyDefinition
+                    {
+                        Column = prop.Name,
+                        ReferencedTable = targetTable,
+                        ReferencedColumn = targetColumn,
+                        OnDelete = ReferentialAction.Cascade,
+                        OnUpdate = ReferentialAction.NoAction,
+                        ConstraintName = $"FK_{entityName}_{prop.Name}"
+                    });
+                }
+            }
+        }
+
+        return foreignKeys;
+    }
+    public static string GenerateForeignKeyConstraints(string schema, string tableName, List<ForeignKeyDefinition> foreignKeys)
+    {
+        var sb = new StringBuilder();
+
+        foreach (var fk in foreignKeys)
+        {
+            var constraintName = $"FK_{tableName}_{fk.Column}";
+            var onDelete = fk.OnDelete switch
+            {
+                ReferentialAction.Cascade => "ON DELETE CASCADE",
+                ReferentialAction.SetNull => "ON DELETE SET NULL",
+                ReferentialAction.SetDefault => "ON DELETE SET DEFAULT",
+                _ => ""
+            };
+
+            var onUpdate = fk.OnUpdate switch
+            {
+                ReferentialAction.Cascade => "ON UPDATE CASCADE",
+                ReferentialAction.SetNull => "ON UPDATE SET NULL",
+                ReferentialAction.SetDefault => "ON UPDATE SET DEFAULT",
+                _ => ""
+            };
+
+            sb.AppendLine($@"ALTER TABLE [{schema}].[{tableName}] 
+ADD CONSTRAINT [{constraintName}] 
+FOREIGN KEY ([{fk.Column}]) 
+REFERENCES [{fk.ReferencedTable}]([{fk.ReferencedColumn}]) 
+{onDelete} {onUpdate};");
+        }
+
+        return sb.ToString();
+    }
+
+
+    public static List<IndexDefinition> AddCheckConstraintIndexes(EntityDefinition entity)
+    {
+        var result = new List<IndexDefinition>();
+
+        foreach (var ck in entity.CheckConstraints)
+        {
+            foreach (var colName in ck.ReferencedColumns)
+            {
+                bool alreadyIndexed = entity.Indexes.Any(ix =>
+                    ix.Columns.Contains(colName, StringComparer.OrdinalIgnoreCase));
+
+                bool isColumnValid = entity.Columns.Any(c =>
+                    c.Name.Equals(colName, StringComparison.OrdinalIgnoreCase) &&
+                    !c.TypeName.Contains("(max)", StringComparison.OrdinalIgnoreCase)); // تجنب nvarchar(max)
+
+                if (!alreadyIndexed && isColumnValid)
+                {
+                    result.Add(new IndexDefinition
+                    {
+                        Name = $"IX_{entity.Name}_{colName}_ForCheck",
+                        Columns = new List<string> { colName },
+                        IsUnique = false,
+                        Description = $"Auto index to support CHECK constraint {ck.Name}"
+                    });
+                }
+            }
+        }
+
+        return result;
+    }
+
+    public static List<IndexDefinition> AddSensitiveIndexes(EntityDefinition entity)
+    {
+        var result = new List<IndexDefinition>();
+        var sensitiveNames = new[] { "Email", "Username", "Code" };
+
+        foreach (var col in entity.Columns)
+        {
+            if (sensitiveNames.Contains(col.Name, StringComparer.OrdinalIgnoreCase))
+            {
+                bool alreadyIndexed = entity.Indexes.Any(ix =>
+                    ix.Columns.Contains(col.Name, StringComparer.OrdinalIgnoreCase));
+
+                if (!alreadyIndexed)
+                {
+                    result.Add(new IndexDefinition
+                    {
+                        Name = $"IX_{entity.Name}_{col.Name}_AutoSensitive",
+                        Columns = new List<string> { col.Name },
+                        IsUnique = true,
+                        Description = "Auto-generated index for login-critical field"
+                    });
+                }
+            }
+        }
+
+        return result;
+    }
+
+    public static List<IndexDefinition> AddNavigationIndexes(EntityDefinition entity)
+    {
+        var result = new List<IndexDefinition>();
+
+        foreach (var rel in entity.Relationships)
+        {
+            var fkColumn = rel.SourceToTargetColumn ?? $"{rel.TargetEntity}Id";
+
+            bool alreadyIndexed = entity.Indexes.Any(ix =>
+                ix.Columns.Contains(fkColumn, StringComparer.OrdinalIgnoreCase));
+
+            bool isColumnValid = entity.Columns.Any(c =>
+                c.Name.Equals(fkColumn, StringComparison.OrdinalIgnoreCase));
+
+            if (!alreadyIndexed && isColumnValid)
+            {
+                result.Add(new IndexDefinition
+                {
+                    Name = $"IX_{entity.Name}_{fkColumn}_AutoNav",
+                    Columns = new List<string> { fkColumn },
+                    IsUnique = false,
+                    Description = "Auto-generated index for navigation property"
+                });
+            }
+        }
+
+        return result;
     }
 
 

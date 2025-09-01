@@ -6,48 +6,54 @@
 /// </summary>
 public class ImpactItem
 {
-    /// <summary>
-    /// The type of the affected object: "Column", "Constraint", "Index", etc.
-    /// </summary>
+    /// <summary>The type of the affected object (e.g., Column, Constraint, Index).</summary>
     public string Type { get; set; }
 
-    /// <summary>
-    /// The nature of the change: "Added", "Dropped", "Modified".
-    /// </summary>
+    /// <summary>The nature of the change (e.g., Added, Dropped, Modified).</summary>
     public string Action { get; set; }
 
-    /// <summary>
-    /// The name of the table where the change occurred.
-    /// </summary>
+    /// <summary>The name of the table where the change occurred.</summary>
     public string Table { get; set; }
 
-    /// <summary>
-    /// The name of the affected column, constraint, or index.
-    /// </summary>
+    /// <summary>The name of the affected column, constraint, or index.</summary>
     public string Name { get; set; }
 
-    /// <summary>
-    /// The original SQL type definition (e.g., "nvarchar(100) NOT NULL") before modification.
-    /// </summary>
+    /// <summary>Optional original SQL type definition before modification.</summary>
     public string? OriginalType { get; set; }
 
-    /// <summary>
-    /// The new SQL type definition after modification.
-    /// </summary>
+    /// <summary>Optional new SQL type definition after modification.</summary>
     public string? NewType { get; set; }
 
-    /// <summary>
-    /// Optional severity level of the change: "Low", "Medium", "High".
-    /// </summary>
+    /// <summary>Optional severity level of the change (e.g., Low, Medium, High).</summary>
     public string? Severity { get; set; }
 
-    /// <summary>
-    /// Optional explanation of why this change may be risky or impactful.
-    /// </summary>
+    /// <summary>Optional explanation of why this change may be risky or impactful.</summary>
     public string? Reason { get; set; }
 
-    /// <summary>
-    /// Optional list of affected columns (used for constraints or indexes).
-    /// </summary>
+    /// <summary>Optional list of affected columns (used for constraints or indexes).</summary>
     public List<string>? AffectedColumns { get; set; }
+
+    /// <summary>
+    /// Returns a Markdown-formatted row representing this impact item.
+    /// </summary>
+    public string ToMarkdownRow() =>
+        $"| {Type} | {Action} | {Table} | {Name} | {Severity ?? "-"} | {Reason ?? "-"} |";
+
+    /// <summary>
+    /// Returns an HTML-formatted row representing this impact item, with severity-based styling.
+    /// </summary>
+    public string ToHtmlRow()
+    {
+        var severityClass = Severity?.ToLowerInvariant() switch
+        {
+            "high" => "high",
+            "medium" => "medium",
+            "low" => "low",
+            _ => ""
+        };
+
+        return $"<tr class='{severityClass}'>" +
+               $"<td>{Type}</td><td>{Action}</td><td>{Table}</td><td>{Name}</td>" +
+               $"<td>{Severity ?? "-"}</td><td>{Reason ?? "-"}</td></tr>";
+    }
 }

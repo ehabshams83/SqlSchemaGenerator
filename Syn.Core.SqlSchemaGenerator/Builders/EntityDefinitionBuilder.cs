@@ -120,11 +120,12 @@ public partial class EntityDefinitionBuilder
             ClrType = entityType
         };
 
+        // وصف الجدول
         var tableDescAttr = entityType.GetCustomAttribute<System.ComponentModel.DescriptionAttribute>();
-        if (tableDescAttr != null && !string.IsNullOrWhiteSpace(tableDescAttr.Description))
+        if (!string.IsNullOrWhiteSpace(tableDescAttr?.Description))
             entity.Description = tableDescAttr.Description;
 
-        // ✅ الأعمدة (بدون Navigation)
+        // الأعمدة
         foreach (var prop in entityType
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Where(p => p.GetCustomAttribute<NotMappedAttribute>() == null && !IsNavigationProperty(p)))
@@ -132,33 +133,25 @@ public partial class EntityDefinitionBuilder
             BuildColumn(prop, entity);
         }
 
-        // ✅ المفتاح الأساسي
+        // المفتاح الأساسي
         entity.PrimaryKey = GetPrimaryKey(entityType);
         if (entity.PrimaryKey != null && string.IsNullOrWhiteSpace(entity.PrimaryKey.Name))
             entity.PrimaryKey.Name = $"PK_{entity.Name}";
 
         ApplyPrimaryKeyOverrides(entity);
 
-        foreach (var col in entity.Columns)
-            Console.WriteLine($"[TRACE:ColumnPostOverride] {entity.Name}.{col.Name} → Identity={col.IsIdentity}, Nullable={col.IsNullable}");
+        // ✅ المفاتيح الأجنبية (باستخدام الميثود الجديدة)
+        entity.ForeignKeys = BuildForeignKeys(entityType, entity.Name);
 
-        // ✅ المفاتيح الأجنبية
-        entity.ForeignKeys = entityType.GetForeignKeys();
-        foreach (var fk in entity.ForeignKeys)
-        {
-            if (string.IsNullOrWhiteSpace(fk.ConstraintName))
-                fk.ConstraintName = $"FK_{entity.Name}_{fk.Column}";
-        }
-
+        // استنتاج العلاقات
         InferForeignKeysFromNavigation(entityType, entity);
         InferOneToOneRelationships(entityType, entity, new List<EntityDefinition> { entity });
         ValidateForeignKeys(entity);
 
-        // ✅ فهارس من EF فقط
-        var efIndexes = GetIndexes(entityType);
-        entity.Indexes.AddRange(efIndexes);
+        // الفهارس من EF
+        entity.Indexes.AddRange(GetIndexes(entityType));
 
-        // ✅ فهارس داعمة للـ CHECK (أسماء ثابتة)
+        // فهارس CHECK
         foreach (var ck in entity.CheckConstraints)
         {
             foreach (var colName in ck.ReferencedColumns)
@@ -166,20 +159,18 @@ public partial class EntityDefinitionBuilder
                 bool alreadyIndexed = entity.Indexes.Any(ix => ix.Columns.Contains(colName, StringComparer.OrdinalIgnoreCase));
                 if (!alreadyIndexed && entity.Columns.Any(c => c.Name.Equals(colName, StringComparison.OrdinalIgnoreCase)))
                 {
-                    var ixName = $"IX_{entity.Name}_{colName}_ForCheck"; // ثابت
                     entity.Indexes.Add(new IndexDefinition
                     {
-                        Name = ixName,
+                        Name = $"IX_{entity.Name}_{colName}_ForCheck",
                         Columns = new List<string> { colName },
                         IsUnique = false,
                         Description = $"Auto index to support CHECK constraint {ck.Name}"
                     });
-                    Console.WriteLine($"[TRACE:AutoIndex] Added index for CHECK: {ixName} on {colName}");
                 }
             }
         }
 
-        // ✅ فهارس الأعمدة الحساسة (أسماء ثابتة)
+        // فهارس الأعمدة الحساسة
         var sensitiveNames = new[] { "Email", "Username", "Code" };
         foreach (var col in entity.Columns)
         {
@@ -188,64 +179,42 @@ public partial class EntityDefinitionBuilder
                 var alreadyIndexed = entity.Indexes.Any(ix => ix.Columns.Contains(col.Name, StringComparer.OrdinalIgnoreCase));
                 if (!alreadyIndexed)
                 {
-                    var autoIndexName = $"IX_{entity.Name}_{col.Name}_AutoSensitive";
                     entity.Indexes.Add(new IndexDefinition
                     {
-                        Name = autoIndexName,
+                        Name = $"IX_{entity.Name}_{col.Name}_AutoSensitive",
                         Columns = new List<string> { col.Name },
                         IsUnique = true,
                         Description = "Auto-generated index for login-critical field"
                     });
-                    Console.WriteLine($"[TRACE:AutoIndex] Added sensitive index: {autoIndexName} on {col.Name}");
                 }
             }
         }
 
-        // ✅ فهارس أعمدة العلاقات (أسماء ثابتة)
+        // فهارس أعمدة العلاقات
         foreach (var rel in entity.Relationships)
         {
             var fkColumn = rel.SourceToTargetColumn ?? $"{rel.TargetEntity}Id";
             var alreadyIndexed = entity.Indexes.Any(ix => ix.Columns.Contains(fkColumn, StringComparer.OrdinalIgnoreCase));
             if (!alreadyIndexed && entity.Columns.Any(c => c.Name.Equals(fkColumn, StringComparison.OrdinalIgnoreCase)))
             {
-                var autoIndexName = $"IX_{entity.Name}_{fkColumn}_AutoNav";
                 entity.Indexes.Add(new IndexDefinition
                 {
-                    Name = autoIndexName,
+                    Name = $"IX_{entity.Name}_{fkColumn}_AutoNav",
                     Columns = new List<string> { fkColumn },
                     IsUnique = false,
                     Description = "Auto-generated index for navigation property"
                 });
-                Console.WriteLine($"[TRACE:AutoIndex] Added navigation index: {autoIndexName} on {fkColumn}");
             }
         }
 
-        // ✅ إزالة التكرار في الفهارس
+        // إزالة التكرار
         entity.Indexes = entity.Indexes
             .GroupBy(ix => ix.Name)
             .Select(g => g.First())
             .ToList();
 
-        // ✅ استنتاج قيود CHECK بعد تثبيت الأسماء
+        // استنتاج قيود CHECK بعد تثبيت الأسماء
         InferCheckConstraints(entityType, entity);
-
-        // ✅ تتبع
-        Console.WriteLine($"[TRACE] Built entity: {entity.Name}");
-        Console.WriteLine("  Columns:");
-        foreach (var col in entity.Columns)
-            Console.WriteLine($"    🧩 {col.Name} ({col.TypeName}) Nullable={col.IsNullable} Identity={col.IsIdentity}");
-
-        Console.WriteLine("  Relationships:");
-        foreach (var rel in entity.Relationships)
-            Console.WriteLine($"    🔗 {rel.SourceEntity} {rel.Type} -> {rel.TargetEntity} (Cascade={rel.OnDelete})");
-
-        Console.WriteLine("  CheckConstraints:");
-        foreach (var ck in entity.CheckConstraints)
-            Console.WriteLine($"    ✅ {ck.Name}: {ck.Expression}");
-
-        Console.WriteLine("  Indexes:");
-        foreach (var ix in entity.Indexes)
-            Console.WriteLine($"    📌 {ix.Name} → Columns=[{string.Join(", ", ix.Columns)}] Unique={ix.IsUnique}");
 
         return entity;
     }
@@ -283,12 +252,7 @@ public partial class EntityDefinitionBuilder
         if (entityTypes == null)
             throw new ArgumentNullException(nameof(entityTypes));
 
-        var result = new List<EntityDefinition>();
-        foreach (var type in entityTypes)
-        {
-            result.Add(Build(type));
-        }
-        return result;
+        return BuildAllWithRelationships(entityTypes);
     }
 
     /// <summary>
@@ -309,18 +273,16 @@ public partial class EntityDefinitionBuilder
 
         Console.WriteLine("===== [TRACE] Pass 1: Building basic entities =====");
 
-        // 🧠 تتبع الكيانات اللي داخلة فعليًا
         foreach (var type in entityTypes)
         {
             Console.WriteLine($"[TRACE:Build] Including type: {type.Name}");
         }
 
-        // 🥇 Pass 1: بناء الكيانات وتجميع البيانات الأساسية فقط
         var allEntities = entityTypes
             .Where(t => t.IsClass && t.IsPublic && !t.IsAbstract)
             .Select(t =>
             {
-                var entity = Build(t); // بناء أولي
+                var entity = Build(t);
                 entity.ClrType = t;
 
                 Console.WriteLine($"[TRACE] Built entity: {entity.Name}");
@@ -334,7 +296,6 @@ public partial class EntityDefinitionBuilder
             })
             .ToList();
 
-        // 🥈 Pass 2: نسخة Snapshot آمنة
         var entityListSnapshot = allEntities.ToList();
 
         Console.WriteLine();
@@ -344,26 +305,37 @@ public partial class EntityDefinitionBuilder
         {
             Console.WriteLine($"[TRACE] Analyzing {entity.Name}...");
 
-            // 🔹 Foreign Keys من الـ Navigation
             InferForeignKeysFromNavigation(entity.ClrType, entity);
-
-            // 🔹 علاقات One-to-Many و Many-to-Many
             InferCollectionRelationships(entity.ClrType, entity, allEntities);
 
-            // 🔹 علاقات One-to-One مع تتبّع
             Console.WriteLine($"  -> Before OneToOne: {entity.Relationships.Count} relationships");
             InferOneToOneRelationships(entity.ClrType, entity, allEntities);
             Console.WriteLine($"  -> After OneToOne: {entity.Relationships.Count} relationships");
 
-            // 🔹 قيود CHECK مع تتبّع
             Console.WriteLine($"  -> Before CHECK: {entity.CheckConstraints.Count} constraints");
             InferCheckConstraints(entity.ClrType, entity);
             Console.WriteLine($"  -> After CHECK: {entity.CheckConstraints.Count} constraints");
         }
 
+        Console.WriteLine();
+        Console.WriteLine("===== [TRACE] Pass 3: Finalizing indexes and cleanup =====");
+
+        foreach (var entity in allEntities)
+        {
+            entity.Indexes.AddRange(AddCheckConstraintIndexes(entity));
+            entity.Indexes.AddRange(AddSensitiveIndexes(entity));
+            entity.Indexes.AddRange(AddNavigationIndexes(entity));
+
+            entity.Indexes = entity.Indexes
+                .GroupBy(ix => ix.Name)
+                .Select(g => g.First())
+                .ToList();
+
+            InferCheckConstraints(entity.ClrType, entity); // بعد الفهارس
+        }
+
         return allEntities;
     }
-
 
     /// <summary>
     /// Builds multiple <see cref="EntityDefinition"/> instances by scanning all public

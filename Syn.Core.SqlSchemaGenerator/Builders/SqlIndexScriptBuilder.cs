@@ -29,7 +29,7 @@ namespace Syn.Core.SqlSchemaGenerator.Builders
         public string BuildCreate(Type entityType)
         {
             if (entityType == null) throw new ArgumentNullException(nameof(entityType));
-            return BuildCreate(_entityDefinitionBuilder.Build(entityType));
+            return BuildCreate(_entityDefinitionBuilder.BuildAllWithRelationships(new[] { entityType }).First());
         }
 
         /// <summary>
@@ -38,7 +38,7 @@ namespace Syn.Core.SqlSchemaGenerator.Builders
         public string BuildDrop(Type entityType)
         {
             if (entityType == null) throw new ArgumentNullException(nameof(entityType));
-            return BuildDrop(_entityDefinitionBuilder.Build(entityType));
+            return BuildDrop(_entityDefinitionBuilder.BuildAllWithRelationships(new[] { entityType }).First());
         }
 
         /// <summary>

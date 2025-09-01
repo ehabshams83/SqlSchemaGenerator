@@ -53,21 +53,6 @@ public class SqlAlterTableBuilder
         return sb.ToString();
     }
 
-    /// <summary>
-    /// Builds ALTER script by first generating entity definitions from Types.
-    /// </summary>
-    public string BuildFromTypes(Type oldType, Type newType)
-    {
-        if (_entityDefinitionBuilder == null)
-            throw new InvalidOperationException(
-                "EntityDefinitionBuilder was not provided."
-            );
-
-        var oldEntity = _entityDefinitionBuilder.Build(oldType);
-        var newEntity = _entityDefinitionBuilder.Build(newType);
-        return Build(oldEntity, newEntity);
-    }
-
     #region === Columns ===
 
     private void AppendColumnChanges(StringBuilder sb, EntityDefinition oldEntity, EntityDefinition newEntity)

@@ -33,7 +33,7 @@ public class MigrationRunner
         _autoMigrate = new AutoMigrate(connectionString);
         var connection = new SqlConnection(connectionString);
         _dbReader = new DatabaseSchemaReader(connection);
-        _migrationService = new MigrationService(_entityDefinitionBuilder, _autoMigrate);
+        _migrationService = new MigrationService(_entityDefinitionBuilder, _autoMigrate, _dbReader);
     }
 
     /// <summary>
@@ -45,7 +45,7 @@ public class MigrationRunner
         _entityDefinitionBuilder = builder ?? throw new ArgumentNullException(nameof(builder));
         _autoMigrate = autoMigrate ?? throw new ArgumentNullException(nameof(autoMigrate));
         _dbReader = dbReader ?? throw new ArgumentNullException(nameof(dbReader));
-        _migrationService = new MigrationService(builder, autoMigrate);
+        _migrationService = new MigrationService(builder, autoMigrate, dbReader);
     }
 
     /// <summary>
@@ -54,19 +54,19 @@ public class MigrationRunner
     /// analyzes impact and safety, shows detailed reports, and optionally executes interactively.
     /// </summary>
     public void RunMigrationSession(
-        IEnumerable<Type> entityTypes,
-        bool execute = true,
-        bool dryRun = false,
-        bool interactive = false,
-        bool previewOnly = false,
-        bool autoMerge = false,
-        bool showReport = false,
-        bool impactAnalysis = false,
-        bool rollbackOnFailure = true,
-        bool autoExecuteRollback = false,
-        string interactiveMode = "step",
-        bool rollbackPreviewOnly = false,
-        bool logToFile = false)
+    IEnumerable<Type> entityTypes,
+    bool execute = true,
+    bool dryRun = false,
+    bool interactive = false,
+    bool previewOnly = false,
+    bool autoMerge = false,
+    bool showReport = false,
+    bool impactAnalysis = false,
+    bool rollbackOnFailure = true,
+    bool autoExecuteRollback = false,
+    string interactiveMode = "step",
+    bool rollbackPreviewOnly = false,
+    bool logToFile = false)
     {
         Console.WriteLine("=== Migration Runner Started ===");
 
@@ -74,14 +74,16 @@ public class MigrationRunner
         int alteredTables = 0;
         int unchangedTables = 0;
 
-        foreach (var entityType in entityTypes)
+        // ✅ Pass 1+2+3: بناء كل الكيانات مرة واحدة
+        var newEntities = _entityDefinitionBuilder.BuildAllWithRelationships(entityTypes).ToList();
+
+        foreach (var newEntity in newEntities)
         {
-            Console.WriteLine($"\n[RUNNER] Processing entity: {entityType.Name}");
+            Console.WriteLine($"\n[RUNNER] Processing entity: {newEntity.ClrType?.Name ?? newEntity.Name}");
 
             try
             {
-                var oldEntity = LoadEntityFromDatabase(entityType);
-                var newEntity = _entityDefinitionBuilder.Build(entityType);
+                var oldEntity = _migrationService.LoadEntityFromDatabase(newEntity);
 
                 var script = _migrationService.BuildMigrationScript(
                     oldEntity,
@@ -166,7 +168,7 @@ public class MigrationRunner
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ [RUNNER] Migration failed for {entityType.Name}: {ex.Message}");
+                Console.WriteLine($"❌ [RUNNER] Migration failed for {newEntity.Name}: {ex.Message}");
             }
         }
 
@@ -175,36 +177,6 @@ public class MigrationRunner
         Console.WriteLine($"🆕 New tables created: {newTables}");
         Console.WriteLine($"🔧 Tables altered: {alteredTables}");
         Console.WriteLine($"✅ Unchanged tables: {unchangedTables}");
-    }
-
-    /// <summary>
-    /// Loads the current EntityDefinition from the database for a given CLR type.
-    /// Extracts schema and table name from attributes if available.
-    /// If the table is missing, returns an empty placeholder to treat it as new.
-    /// </summary>
-    private EntityDefinition LoadEntityFromDatabase(Type type)
-    {
-        var (schema, table) = type.GetTableInfo();
-
-        Console.WriteLine($"[DB Loader] Loading schema for table [{schema}].[{table}]");
-
-        var entity = _dbReader.GetEntityDefinition(schema, table);
-
-        if (entity == null)
-        {
-            Console.WriteLine($"?? [DB Loader] Table [{schema}].[{table}] not found in DB. Marked as NEW.");
-            return new EntityDefinition
-            {
-                Schema = schema,
-                Name = table,
-                Columns = new List<ColumnDefinition>(),
-                Constraints = new List<ConstraintDefinition>(),
-                CheckConstraints = new List<CheckConstraintDefinition>(),
-                Indexes = new List<IndexDefinition>()
-            };
-        }
-
-        return entity;
     }
 
 }

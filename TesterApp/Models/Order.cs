@@ -23,14 +23,13 @@ public class Order
     [Required]
     public DateTime OrderDate { get; set; }
 
-    [Required]
-    public int CustomerId { get; set; }
-
     [Column(TypeName = "decimal(18,2)")]
     [Range(0, double.MaxValue)]
     public decimal TotalAmount { get; set; }
 
     public string Notes { get; set; }
+    [Required]
+    public int CustomerId { get; set; }
 
     // Navigation Properties
     public Customer Customer { get; set; }

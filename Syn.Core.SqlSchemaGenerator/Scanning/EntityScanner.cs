@@ -1,7 +1,10 @@
-﻿using Syn.Core.SqlSchemaGenerator.Models;
+﻿using Microsoft.EntityFrameworkCore.Metadata.Internal;
+
 using Syn.Core.SqlSchemaGenerator.Builders;
-using System.Reflection;
+using Syn.Core.SqlSchemaGenerator.Models;
+
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Reflection;
 
 namespace Syn.Core.SqlSchemaGenerator.Scanning;
 
@@ -37,7 +40,9 @@ public class EntityScanner
                 if (!IsValidEntity(type))
                     continue;
 
-                var entity = _builder.Build(type);
+                var entity = _builder
+                .BuildAllWithRelationships(new[] { type })
+                .First();
 
                 if (!entity.IsIgnored)
                     entities.Add(entity);
