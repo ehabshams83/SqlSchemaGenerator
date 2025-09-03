@@ -1,11 +1,12 @@
 ﻿using Microsoft.Data.SqlClient;
 
 using Syn.Core.SqlSchemaGenerator.Models;
+using Syn.Core.SqlSchemaGenerator.Storage;
 
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace Syn.Core.SqlSchemaGenerator;
+namespace Syn.Core.SqlSchemaGenerator.Execution;
 
 /// <summary>
 /// Executes SQL migration scripts with multiple safety and review modes:
@@ -19,7 +20,7 @@ namespace Syn.Core.SqlSchemaGenerator;
 /// </summary>
 public class AutoMigrate
 {
-    private readonly string _connectionString;
+    internal readonly string _connectionString;
 
     public AutoMigrate(string connectionString)
     {
@@ -41,7 +42,47 @@ public class AutoMigrate
         bool showReport = false,
         bool impactAnalysis = false,
         bool rollbackOnFailure = true,
-        bool autoExecuteRollback = false)
+        bool autoExecuteRollback = false,
+        string logicalGroup = null,
+        MigrationSettings settings = null)
+    {
+        ExecuteAsync(
+            migrationScript,
+            oldEntity,
+            newEntity,
+            dryRun,
+            interactive,
+            previewOnly,
+            autoMerge,
+            showReport,
+            impactAnalysis,
+            rollbackOnFailure,
+            autoExecuteRollback,
+            logicalGroup,
+            settings
+        ).GetAwaiter().GetResult();
+    }
+
+
+
+    /// <summary>
+    /// Executes a migration script with full support for dry run, preview, interactive, auto merge, and reporting modes.
+    /// Ensures the target schema exists before executing.
+    /// </summary>
+    public async Task ExecuteAsync(
+        string migrationScript,
+        EntityDefinition oldEntity = null,
+        EntityDefinition newEntity = null,
+        bool dryRun = false,
+        bool interactive = false,
+        bool previewOnly = false,
+        bool autoMerge = false,
+        bool showReport = false,
+        bool impactAnalysis = false,
+        bool rollbackOnFailure = true,
+        bool autoExecuteRollback = false,
+        string logicalGroup = null,
+        MigrationSettings settings = null)
     {
         if (string.IsNullOrWhiteSpace(migrationScript))
         {
@@ -50,90 +91,60 @@ public class AutoMigrate
         }
 
         var schema = newEntity?.Schema ?? "dbo";
-        var commands = SplitSqlCommands(migrationScript);
         var impact = impactAnalysis ? AnalyzeImpact(oldEntity, newEntity) : new();
 
         AssignSeverityAndReason(impact);
         RenderImpactMarkdown(impact);
         RenderImpactHtml(impact);
 
-
-        // 📋 Show Pre-Migration Report
         if (showReport)
         {
-            ShowPreMigrationReport(oldEntity, newEntity, commands, impact, impactAnalysis);
+            ShowPreMigrationReport(oldEntity, newEntity, SplitSqlCommands(migrationScript), impact, impactAnalysis);
             Console.WriteLine();
         }
 
-        // ⚡ AutoMerge Mode
-        if (autoMerge)
-        {
-            Console.WriteLine("⚡ [AutoMigrate] Auto Merge mode: Checking if all changes are safe...");
-            var safety = AnalyzeMigrationSafety(commands, oldEntity, newEntity);
-
-            if (safety.IsSafe)
-            {
-                Console.WriteLine("✅ All changes are safe. Executing automatically...");
-                EnsureSchemaExists(schema);
-                Console.WriteLine("📜 Migration Script Preview:");
-                foreach (var cmd in commands)
-                    Console.WriteLine(cmd + "\nGO\n");
-
-                ExecuteCommands(commands);
-                return;
-            }
-            else
-            {
-                Console.WriteLine("⚠️ Risky changes detected:");
-                foreach (var reason in safety.Reasons)
-                    Console.WriteLine($"   - {reason}");
-
-                previewOnly = true;
-            }
-        }
-
-        // 👀 Preview Mode
-        if (previewOnly)
-        {
-            Console.Write("Do you want to proceed with migration? (Y/N): ");
-            var proceed = Console.ReadLine()?.Trim().ToUpperInvariant();
-            if (proceed != "Y")
-            {
-                Console.WriteLine("❌ [AutoMigrate] Migration cancelled.");
-                return;
-            }
-        }
-
-        // 🔍 Dry Run Mode
         if (dryRun)
         {
             Console.WriteLine("🔍 [AutoMigrate] Dry Run mode: No changes will be applied.");
-            foreach (var cmd in commands)
-                Console.WriteLine($"-- [DryRun] Would execute:\n{cmd}\n");
-            Console.WriteLine("✅ [AutoMigrate] Dry Run completed.");
+            Console.WriteLine(migrationScript);
             return;
         }
 
-        // ✅ Ensure schema exists before executing
         EnsureSchemaExists(schema);
 
-        Console.WriteLine("📜 Migration Script Preview:");
-        foreach (var cmd in commands)
-            Console.WriteLine(cmd + "\nGO\n");
+        var snapshotStore = new JsonSchemaSnapshotStore(@"C:\Snapshots");
+        var history = new MigrationHistoryStore(_connectionString, snapshotStore, settings ?? new MigrationSettings());
 
-        // 🚀 Execute Commands
-        if (interactive)
+        var (isNewVersion, version) = history.EnsureTableAndInsertPending(migrationScript, newEntity, logicalGroup);
+        if (!isNewVersion) return;
+
+        var runner = new SqlScriptRunner();
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
         {
-            ExecuteInteractiveAdvanced(
-                migrationScript,
-                oldEntity,
-                newEntity,
-                rollbackOnFailure,
-                autoExecuteRollback);
+            if (interactive)
+            {
+                await ExecuteInteractiveAdvancedAsync(migrationScript, oldEntity, newEntity, rollbackOnFailure, autoExecuteRollback, "step", false, false, logicalGroup, settings);
+            }
+            else
+            {
+                var result = await runner.ExecuteScriptAsync(_connectionString, migrationScript);
+                Console.WriteLine($"✅ Executed {result.ExecutedBatches}/{result.TotalBatches} batches in {result.DurationMs} ms");
+            }
+
+            stopwatch.Stop();
+            var allEntitiesAfterMigration = newEntity != null
+                ? new List<EntityDefinition> { newEntity }
+                : new List<EntityDefinition>();
+
+            history.MarkApplied(version, (int)stopwatch.ElapsedMilliseconds, allEntitiesAfterMigration);
         }
-        else
+        catch (Exception ex)
         {
-            ExecuteCommands(commands);
+            stopwatch.Stop();
+            history.MarkFailed(version, ex.Message);
+            throw;
         }
     }
 
@@ -157,7 +168,49 @@ public class AutoMigrate
         bool autoExecuteRollback = false,
         string interactiveMode = "step",
         bool rollbackPreviewOnly = false,
-        bool logToFile = false)
+        bool logToFile = false,
+        string logicalGroup = null,
+        MigrationSettings settings = null)
+    {
+        ExecuteInteractiveAdvancedAsync(
+            migrationScript,
+            oldEntity,
+            newEntity,
+            rollbackOnFailure,
+            autoExecuteRollback,
+            interactiveMode,
+            rollbackPreviewOnly,
+            logToFile,
+            logicalGroup,
+            settings
+        ).GetAwaiter().GetResult();
+    }
+
+
+
+    /// <summary>
+    /// Executes a migration script interactively, allowing step-by-step or batch execution,
+    /// with optional rollback, logging, and impact analysis.
+    /// </summary>
+    /// <param name="migrationScript">The full SQL migration script to execute.</param>
+    /// <param name="oldEntity">The previous version of the entity (used for rollback and impact analysis).</param>
+    /// <param name="newEntity">The updated version of the entity (used for rollback and impact analysis).</param>
+    /// <param name="rollbackOnFailure">If true, rolls back the transaction automatically on failure.</param>
+    /// <param name="autoExecuteRollback">If true, prompts the user to execute rollback script after failure.</param>
+    /// <param name="interactiveMode">Execution mode: "step" for command-by-command approval, "batch" for full execution.</param>
+    /// <param name="rollbackPreviewOnly">If true, displays the rollback script without executing it.</param>
+    /// <param name="logToFile">If true, saves execution log to "migration.log" in the current directory.</param>
+    public async Task ExecuteInteractiveAdvancedAsync(
+        string migrationScript,
+        EntityDefinition oldEntity,
+        EntityDefinition newEntity,
+        bool rollbackOnFailure = true,
+        bool autoExecuteRollback = false,
+        string interactiveMode = "step",
+        bool rollbackPreviewOnly = false,
+        bool logToFile = false,
+        string logicalGroup = null,
+        MigrationSettings settings = null)
     {
         if (string.IsNullOrWhiteSpace(migrationScript))
         {
@@ -165,146 +218,77 @@ public class AutoMigrate
             return;
         }
 
-        var commands = SplitSqlCommands(migrationScript);
-        var executed = new List<string>();
+        var snapshotStore = new JsonSchemaSnapshotStore(@"C:\Snapshots");
+        var history = new MigrationHistoryStore(_connectionString, snapshotStore, settings ?? new MigrationSettings());
+        var (isNewVersion, version) = history.EnsureTableAndInsertPending(migrationScript, newEntity, logicalGroup);
+        if (!isNewVersion) return;
+
+        var runner = new SqlScriptRunner();
         var log = new List<string>();
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
-        using var connection = new SqlConnection(_connectionString);
-        connection.Open();
-        using var transaction = connection.BeginTransaction();
-
-        Console.WriteLine("🧭 Starting Interactive Migration...");
-
-        if (interactiveMode == "batch")
+        try
         {
-            Console.Write("Execute all commands in batch mode? (Y/N): ");
-            var batchConfirm = Console.ReadLine()?.Trim().ToUpperInvariant();
-            if (batchConfirm != "Y")
+            if (interactiveMode == "batch")
             {
-                Console.WriteLine("❌ Batch execution cancelled.");
-                return;
+                var result = await runner.ExecuteScriptAsync(_connectionString, migrationScript);
+                log.Add($"✅ Executed {result.ExecutedBatches}/{result.TotalBatches} batches in {result.DurationMs} ms");
             }
-
-            foreach (var cmd in commands)
+            else
             {
-                try
+                var commands = SplitSqlCommands(migrationScript);
+                foreach (var cmd in commands)
                 {
-                    using var sqlCommand = new SqlCommand(cmd, connection, transaction);
-                    sqlCommand.ExecuteNonQuery();
-                    executed.Add(cmd);
-                    log.Add($"✅ Executed: {cmd}");
-                }
-                catch (Exception ex)
-                {
-                    log.Add($"❌ Error: {ex.Message}");
-                    Console.WriteLine($"❌ Error: {ex.Message}");
-                    goto ROLLBACK;
-                }
-            }
-        }
-        else // step-by-step
-        {
-            foreach (var originalCmd in commands)
-            {
-                var cmd = originalCmd;
-
-                Console.WriteLine($"\n🔍 Next Command:\n{cmd}\n");
-                Console.Write("Execute this command? (Y/N/E): ");
-                var input = Console.ReadLine()?.Trim().ToUpperInvariant();
-
-                if (input == "E")
-                {
-                    Console.WriteLine("✏️ Enter modified SQL command:");
-                    var edited = Console.ReadLine();
-                    if (!string.IsNullOrWhiteSpace(edited))
+                    Console.WriteLine($"\n🔍 Next Command:\n{cmd}\n");
+                    Console.Write("Execute this command? (Y/N): ");
+                    var input = Console.ReadLine()?.Trim().ToUpperInvariant();
+                    if (input == "Y")
                     {
-                        cmd = edited;
-                        Console.WriteLine("🔄 Using modified command.");
+                        await runner.ExecuteScriptAsync(_connectionString, cmd);
+                        log.Add($"✅ Executed: {cmd}");
                     }
                     else
                     {
-                        Console.WriteLine("⏭️ Skipped due to empty input.");
-                        continue;
+                        log.Add($"⏭️ Skipped: {cmd}");
                     }
-                }
-
-                if (input == "Y" || input == "E")
-                {
-                    try
-                    {
-                        using var sqlCommand = new SqlCommand(cmd, connection, transaction);
-                        sqlCommand.ExecuteNonQuery();
-                        executed.Add(cmd);
-                        log.Add($"✅ Executed: {cmd}");
-                    }
-                    catch (Exception ex)
-                    {
-                        log.Add($"❌ Error: {ex.Message}");
-                        Console.WriteLine($"❌ Error: {ex.Message}");
-                        goto ROLLBACK;
-                    }
-                }
-                else
-                {
-                    log.Add($"⏭️ Skipped: {cmd}");
-                    Console.WriteLine("⏭️ Skipped.");
                 }
             }
+
+            stopwatch.Stop();
+            var allEntitiesAfterMigration = newEntity != null
+                ? new List<EntityDefinition> { newEntity }
+                : new List<EntityDefinition>();
+
+            history.MarkApplied(version, (int)stopwatch.ElapsedMilliseconds, allEntitiesAfterMigration);
         }
-
-        transaction.Commit();
-        Console.WriteLine("\n✅ Interactive Migration Completed.");
-        Console.WriteLine($"✅ Commands Executed: {executed.Count} / {commands.Count}");
-
-        goto FINALIZE;
-
-    ROLLBACK:
-        transaction.Rollback();
-        Console.WriteLine("⏪ Transaction rolled back.");
-
-        var impact = AnalyzeImpact(oldEntity, newEntity);
-        AssignSeverityAndReason(impact);
-        var rollbackScript = GenerateRollbackScript(impact);
-
-        Console.WriteLine("📜 Suggested Rollback Script:");
-        foreach (var r in rollbackScript)
-            Console.WriteLine(r);
-
-        if (rollbackPreviewOnly)
+        catch (Exception ex)
         {
-            Console.WriteLine("📝 Rollback preview only — no execution.");
-        }
-        else if (autoExecuteRollback)
-        {
-            Console.Write("Do you want to execute rollback now? (Y/N): ");
-            var rollbackInput = Console.ReadLine()?.Trim().ToUpperInvariant();
-            if (rollbackInput == "Y")
+            stopwatch.Stop();
+            history.MarkFailed(version, ex.Message);
+
+            if (rollbackOnFailure)
             {
-                foreach (var r in rollbackScript)
+                var rollbackScript = GenerateRollbackScript(AnalyzeImpact(oldEntity, newEntity));
+                if (rollbackPreviewOnly)
                 {
-                    try
-                    {
-                        using var rollbackCmd = new SqlCommand(r, connection);
-                        rollbackCmd.ExecuteNonQuery();
-                        Console.WriteLine($"⏪ Executed rollback: {r}");
-                        log.Add($"⏪ Executed rollback: {r}");
-                    }
-                    catch (Exception rex)
-                    {
-                        Console.WriteLine($"❌ Rollback failed: {rex.Message}");
-                        log.Add($"❌ Rollback failed: {rex.Message}");
-                    }
+                    Console.WriteLine("📜 Rollback Preview:");
+                    foreach (var r in rollbackScript)
+                        Console.WriteLine(r);
+                }
+                else if (autoExecuteRollback)
+                {
+                    await runner.ExecuteScriptAsync(_connectionString, string.Join("\nGO\n", rollbackScript));
                 }
             }
+            throw;
         }
-
-    FINALIZE:
-        if (logToFile)
+        finally
         {
-            File.WriteAllLines("migration.log", log);
-            Console.WriteLine("📁 Log saved to migration.log");
+            if (logToFile)
+                File.WriteAllLines("migration.log", log);
         }
-    }    /// <summary>
+    }
+
 
 
     /// <summary>
@@ -550,7 +534,7 @@ public class AutoMigrate
             if (match != null)
             {
                 // نحاول نحذف الأوامر/الأسباب المرتبطة بالاسم أولاً، ثم بالعمود لو الاسم مش ظاهر في النص
-                var keyName = !string.IsNullOrWhiteSpace(drop.Name) ? drop.Name : (drop.ReferencedColumns?.FirstOrDefault() ?? "");
+                var keyName = !string.IsNullOrWhiteSpace(drop.Name) ? drop.Name : drop.ReferencedColumns?.FirstOrDefault() ?? "";
                 if (!string.IsNullOrWhiteSpace(keyName))
                 {
                     result.UnsafeCommands.RemoveAll(c =>
@@ -1103,84 +1087,30 @@ END";
 
         return rollback;
     }
-    private string ExtractTableName(string sql)
+
+    private (MigrationHistoryStore history, string version) BeginMigrationTracking(string migrationScript, EntityDefinition newEntity)
     {
-        var match = Regex.Match(sql, @"TABLE\s+\[?(\w+)\]?\.\[?(\w+)\]?", RegexOptions.IgnoreCase);
-        if (match.Success)
-            return $"[{match.Groups[1].Value}].[{match.Groups[2].Value}]";
+        var snapshotStore = new JsonSchemaSnapshotStore(@"C:\Snapshots");
+        var history = new MigrationHistoryStore(_connectionString, snapshotStore);
 
-        match = Regex.Match(sql, @"TABLE\s+\[?(\w+)\]?", RegexOptions.IgnoreCase);
-        if (match.Success)
-            return $"[{match.Groups[1].Value}]";
-
-        return "UNKNOWN_TABLE";
-    }
-
-    private string ExtractColumnName(string sql)
-    {
-        var match = Regex.Match(sql, @"ADD\s+\[?(\w+)\]?\s", RegexOptions.IgnoreCase);
-        return match.Success ? $"[{match.Groups[1].Value}]" : "UNKNOWN_COLUMN";
-    }
-
-    private string ExtractConstraintName(string sql)
-    {
-        var match = Regex.Match(sql, @"CONSTRAINT\s+\[?(\w+)\]?", RegexOptions.IgnoreCase);
-        return match.Success ? $"[{match.Groups[1].Value}]" : "UNKNOWN_CONSTRAINT";
-    }
-
-    private string ExtractIndexName(string sql)
-    {
-        var match = Regex.Match(sql, @"INDEX\s+\[?(\w+)\]?", RegexOptions.IgnoreCase);
-        return match.Success ? $"[{match.Groups[1].Value}]" : "UNKNOWN_INDEX";
-    }
-
-    /// <summary>
-    /// Analyzes a list of SQL commands and determines whether the migration is safe.
-    /// A safe migration contains only additive operations (e.g., ADD COLUMN, ADD CONSTRAINT).
-    /// Returns false if any risky operation is detected, and prints reasons.
-    /// </summary>
-    /// <param name="commands">List of SQL commands to analyze.</param>
-    /// <returns>True if all commands are safe; otherwise false.</returns>
-    private bool IsSafeMigration(List<string> commands)
-    {
-        bool isSafe = true;
-
-        foreach (var cmd in commands)
+        var (isNewVersion, version) = history.EnsureTableAndInsertPending(migrationScript, newEntity);
+        if (!isNewVersion)
         {
-            var upper = cmd.ToUpperInvariant();
-            var summary = cmd.Split('\n')[0].Trim();
-
-            if (upper.Contains("DROP COLUMN"))
-            {
-                Console.WriteLine($"❌ Unsafe: Dropping column → {summary}");
-                isSafe = false;
-            }
-            else if (upper.Contains("DROP CONSTRAINT"))
-            {
-                Console.WriteLine($"❌ Unsafe: Dropping constraint → {summary}");
-                isSafe = false;
-            }
-            else if (upper.Contains("ALTER COLUMN"))
-            {
-                Console.WriteLine($"❌ Unsafe: Altering column → {summary}");
-                isSafe = false;
-            }
-            else if (upper.Contains("DROP INDEX"))
-            {
-                Console.WriteLine($"❌ Unsafe: Dropping index → {summary}");
-                isSafe = false;
-            }
-            else if (upper.Contains("ALTER TABLE") && upper.Contains("DROP"))
-            {
-                Console.WriteLine($"❌ Unsafe: ALTER TABLE with DROP → {summary}");
-                isSafe = false;
-            }
-            else
-            {
-                Console.WriteLine($"✅ Safe: {summary}");
-            }
+            Console.WriteLine("[Migration] This migration version already exists. Skipping execution.");
+            return (null, null);
         }
 
-        return isSafe;
+        return (history, version);
     }
+
+    private void FinalizeMigrationSuccess(MigrationHistoryStore history, string version, IEnumerable<EntityDefinition> entities, int durationMs)
+    {
+        history?.MarkApplied(version, durationMs, entities);
+    }
+
+    private void FinalizeMigrationFailure(MigrationHistoryStore history, string version, string errorMessage)
+    {
+        history?.MarkFailed(version, errorMessage);
+    }
+
 }

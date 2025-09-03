@@ -125,7 +125,7 @@ public partial class EntityDefinitionBuilder
         if (!string.IsNullOrWhiteSpace(tableDescAttr?.Description))
             entity.Description = tableDescAttr.Description;
 
-        // الأعمدة
+        // الأعمدة (بدون Navigation Properties)
         foreach (var prop in entityType
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Where(p => p.GetCustomAttribute<NotMappedAttribute>() == null && !IsNavigationProperty(p)))
@@ -140,12 +140,14 @@ public partial class EntityDefinitionBuilder
 
         ApplyPrimaryKeyOverrides(entity);
 
-        // ✅ المفاتيح الأجنبية (باستخدام الميثود الجديدة)
+        // المفاتيح الأجنبية (بدون تحليل علاقات)
         entity.ForeignKeys = BuildForeignKeys(entityType, entity.Name);
 
-        // استنتاج العلاقات
+        // استنتاج المفاتيح الأجنبية من الـ Navigation (لكن بدون OneToOne هنا)
         InferForeignKeysFromNavigation(entityType, entity);
-        InferOneToOneRelationships(entityType, entity, new List<EntityDefinition> { entity });
+
+        // ✅ لا يوجد InferOneToOneRelationships هنا — هيتعمل في Pass 2
+
         ValidateForeignKeys(entity);
 
         // الفهارس من EF
@@ -190,7 +192,7 @@ public partial class EntityDefinitionBuilder
             }
         }
 
-        // فهارس أعمدة العلاقات
+        // فهارس أعمدة العلاقات (لو فيه علاقات اتبنت لاحقًا)
         foreach (var rel in entity.Relationships)
         {
             var fkColumn = rel.SourceToTargetColumn ?? $"{rel.TargetEntity}Id";
@@ -207,7 +209,7 @@ public partial class EntityDefinitionBuilder
             }
         }
 
-        // إزالة التكرار
+        // إزالة التكرار في الفهارس
         entity.Indexes = entity.Indexes
             .GroupBy(ix => ix.Name)
             .Select(g => g.First())
@@ -267,59 +269,42 @@ public partial class EntityDefinitionBuilder
     /// </summary>
     /// <param name="entityTypes">The CLR types representing entities.</param>
     /// <returns>A list of enriched EntityDefinition objects.</returns>
+    /// 
+
     public List<EntityDefinition> BuildAllWithRelationships(IEnumerable<Type> entityTypes)
     {
-        if (entityTypes == null) throw new ArgumentNullException(nameof(entityTypes));
+        if (entityTypes == null)
+            throw new ArgumentNullException(nameof(entityTypes));
 
+        // ===== Pass 1: بناء الكيانات الأساسية =====
         Console.WriteLine("===== [TRACE] Pass 1: Building basic entities =====");
-
-        foreach (var type in entityTypes)
-        {
-            Console.WriteLine($"[TRACE:Build] Including type: {type.Name}");
-        }
 
         var allEntities = entityTypes
             .Where(t => t.IsClass && t.IsPublic && !t.IsAbstract)
             .Select(t =>
             {
-                var entity = Build(t);
+                Console.WriteLine($"[TRACE:Build] Including type: {t.Name}");
+                var entity = Build(t); // يبني الأعمدة، الـ PK، والـ Checks المحلية فقط
                 entity.ClrType = t;
-
-                Console.WriteLine($"[TRACE] Built entity: {entity.Name}");
-                Console.WriteLine("  Columns:");
-                foreach (var col in entity.Columns)
-                    Console.WriteLine($"    🧩 {col.Name} ({col.TypeName}) Nullable={col.IsNullable} Identity={col.IsIdentity}");
-                Console.WriteLine($"  Relationships: {entity.Relationships.Count}");
-                Console.WriteLine($"  CheckConstraints: {entity.CheckConstraints.Count}");
-
                 return entity;
             })
             .ToList();
 
-        var entityListSnapshot = allEntities.ToList();
-
-        Console.WriteLine();
+        // ===== Pass 2: تحليل العلاقات =====
         Console.WriteLine("===== [TRACE] Pass 2: Inferring relationships and constraints =====");
 
-        foreach (var entity in entityListSnapshot)
+        foreach (var entity in allEntities)
         {
-            Console.WriteLine($"[TRACE] Analyzing {entity.Name}...");
-
-            InferForeignKeysFromNavigation(entity.ClrType, entity);
-            InferCollectionRelationships(entity.ClrType, entity, allEntities);
-
-            Console.WriteLine($"  -> Before OneToOne: {entity.Relationships.Count} relationships");
             InferOneToOneRelationships(entity.ClrType, entity, allEntities);
-            Console.WriteLine($"  -> After OneToOne: {entity.Relationships.Count} relationships");
-
-            Console.WriteLine($"  -> Before CHECK: {entity.CheckConstraints.Count} constraints");
-            InferCheckConstraints(entity.ClrType, entity);
-            Console.WriteLine($"  -> After CHECK: {entity.CheckConstraints.Count} constraints");
         }
 
+        foreach (var entity in allEntities)
+        {
+            InferCollectionRelationships(entity.ClrType, entity, allEntities);
+        }
         Console.WriteLine();
-        Console.WriteLine("===== [TRACE] Pass 3: Finalizing indexes and cleanup =====");
-
+        // ===== Pass 3: خطوات إضافية (اختياري) =====
+        Console.WriteLine("===== [TRACE] Pass 3: Finalizing =====");
         foreach (var entity in allEntities)
         {
             entity.Indexes.AddRange(AddCheckConstraintIndexes(entity));
@@ -336,6 +321,81 @@ public partial class EntityDefinitionBuilder
 
         return allEntities;
     }
+
+
+
+
+    //public List<EntityDefinition> BuildAllWithRelationships(IEnumerable<Type> entityTypes)
+    //{
+    //    if (entityTypes == null) throw new ArgumentNullException(nameof(entityTypes));
+
+    //    Console.WriteLine("===== [TRACE] Pass 1: Building basic entities =====");
+
+    //    foreach (var type in entityTypes)
+    //    {
+    //        Console.WriteLine($"[TRACE:Build] Including type: {type.Name}");
+    //    }
+
+    //    var allEntities = entityTypes
+    //        .Where(t => t.IsClass && t.IsPublic && !t.IsAbstract)
+    //        .Select(t =>
+    //        {
+    //            var entity = Build(t);
+    //            entity.ClrType = t;
+
+    //            Console.WriteLine($"[TRACE] Built entity: {entity.Name}");
+    //            Console.WriteLine("  Columns:");
+    //            foreach (var col in entity.Columns)
+    //                Console.WriteLine($"    🧩 {col.Name} ({col.TypeName}) Nullable={col.IsNullable} Identity={col.IsIdentity}");
+    //            Console.WriteLine($"  Relationships: {entity.Relationships.Count}");
+    //            Console.WriteLine($"  CheckConstraints: {entity.CheckConstraints.Count}");
+
+    //            return entity;
+    //        })
+    //        .ToList();
+
+    //    var entityListSnapshot = allEntities.ToList();
+
+    //    Console.WriteLine();
+    //    Console.WriteLine("===== [TRACE] Pass 2: Inferring relationships and constraints =====");
+
+    //    foreach (var entity in entityListSnapshot)
+    //    {
+    //        Console.WriteLine($"[TRACE] Analyzing {entity.Name}...");
+
+    //        InferForeignKeysFromNavigation(entity.ClrType, entity);
+    //        InferCollectionRelationships(entity.ClrType, entity, allEntities);
+
+    //        Console.WriteLine($"  -> Before OneToOne: {entity.Relationships.Count} relationships");
+    //        InferOneToOneRelationships(entity.ClrType, entity, allEntities);
+    //        Console.WriteLine($"  -> After OneToOne: {entity.Relationships.Count} relationships");
+
+    //        Console.WriteLine($"  -> Before CHECK: {entity.CheckConstraints.Count} constraints");
+    //        InferCheckConstraints(entity.ClrType, entity);
+    //        Console.WriteLine($"  -> After CHECK: {entity.CheckConstraints.Count} constraints");
+    //    }
+
+    //    Console.WriteLine();
+    //    Console.WriteLine("===== [TRACE] Pass 3: Finalizing indexes and cleanup =====");
+
+    //    foreach (var entity in allEntities)
+    //    {
+    //        entity.Indexes.AddRange(AddCheckConstraintIndexes(entity));
+    //        entity.Indexes.AddRange(AddSensitiveIndexes(entity));
+    //        entity.Indexes.AddRange(AddNavigationIndexes(entity));
+
+    //        entity.Indexes = entity.Indexes
+    //            .GroupBy(ix => ix.Name)
+    //            .Select(g => g.First())
+    //            .ToList();
+
+    //        InferCheckConstraints(entity.ClrType, entity); // بعد الفهارس
+    //    }
+
+    //    return allEntities;
+    //}
+
+
 
     /// <summary>
     /// Builds multiple <see cref="EntityDefinition"/> instances by scanning all public
@@ -665,26 +725,53 @@ public partial class EntityDefinitionBuilder
     #endregion
 
     /// <summary>
-    /// Converts a ColumnModel to a ColumnDefinition.
+    /// Converts a ColumnModel to a ColumnDefinition, copying all relevant properties.
     /// </summary>
     private static ColumnDefinition ToColumnDefinition(ColumnModel model)
     {
-        return new ColumnDefinition
-        {
-            Name = model.Name,
+        if (model == null) throw new ArgumentNullException(nameof(model));
+        return model.MapTo<ColumnModel, ColumnDefinition>();
+        //return new ColumnDefinition
+        //{
+        //    // 🔹 Core Properties
+        //    Name = model.Name,
+        //    TypeName = model.TypeName ?? model.PropertyType.MapClrTypeToSql(),
+        //    Precision = model.Precision,
+        //    Scale = model.Scale,
+        //    IsNullable = model.IsNullable,
+        //    DefaultValue = model.DefaultValue,
+        //    Collation = model.Collation,
+        //    ComputedExpression = model.ComputedExpression,
+        //    Order = model.Order,
+        //    Comment = model.Comment,
+        //    Description = model.Description,
 
-            TypeName = model.TypeName ?? InferSqlType(model.PropertyType),
-            IsNullable = model.IsNullable,
-            IsForeignKey = model.IsForeignKey,
-            IsUnique = model.IsUnique,
-            IsPrimaryKey = model.IsPrimaryKey,
-            UniqueConstraintName = model.UniqueConstraintName,
-            IgnoreReason = model.IgnoreReason,
-            IsIgnored = model.IsIgnored,
-            DefaultValue = model.DefaultValue,
-            Collation = model.Collation,
-            Description = model.Description,
-        };
+        //    // 🔹 Constraints & Identity
+        //    IsIdentity = model.IsIdentity,
+        //    IsPrimaryKey = model.IsPrimaryKey,
+        //    IsUnique = model.IsUnique,
+        //    UniqueConstraintName = model.UniqueConstraintName,
+        //    CheckConstraints = model.CheckConstraints != null
+        //        ? new List<CheckConstraintDefinition>(model.CheckConstraints)
+        //        : new List<CheckConstraintDefinition>(),
+
+        //    // 🔹 Indexing
+        //    Indexes = model.Indexes != null
+        //        ? new List<IndexDefinition>(model.Indexes)
+        //        : new List<IndexDefinition>(),
+
+        //    // 🔹 Foreign Key & Navigation
+        //    IsForeignKey = model.IsForeignKey,
+        //    ForeignKeyTarget = model.ForeignKeyTarget,
+        //    IsNavigationProperty = model.IsNavigationProperty,
+
+        //    // 🔹 Metadata & Control
+        //    IsIgnored = model.IsIgnored,
+        //    IgnoreReason = model.IgnoreReason,
+
+        //    // 🆕 Persisted flag for computed columns
+        //    IsPersisted = model.IsPersisted
+        //};
     }
 
     /// <summary>
@@ -833,48 +920,161 @@ public partial class EntityDefinitionBuilder
         return indexes;
     }
 
+    /// <summary>
+    /// Builds a column definition from a property, applying attributes, defaults, computed logic,
+    /// and smart length adjustments for indexed text columns.
+    /// </summary>
     public void BuildColumn(PropertyInfo prop, EntityDefinition entity)
     {
-        // ✅ تجاهل الخصائص التنقلية (Navigation Properties)
+        // ⛔ تجاهل الخصائص التنقلية
         if (IsCollectionOfEntity(prop) || IsReferenceToEntity(prop))
             return;
 
         var columnName = GetColumnName(prop);
-        var isNullable = IsNullable(prop);
-        var maxLength = GetMaxLength(prop);
-        var defaultValue = GetDefaultValue(prop);
 
+        // 📌 Nullable من النوع أو [Required]
+        bool isNullable = IsNullable(prop);
+        if (prop.GetCustomAttribute<RequiredAttribute>() != null)
+            isNullable = false;
+
+        // 📌 الطول من Attributes
+        int? maxLength = null;
+        var strLenAttr = prop.GetCustomAttribute<StringLengthAttribute>();
+        var maxLenAttr = prop.GetCustomAttribute<MaxLengthAttribute>();
+        if (strLenAttr?.MaximumLength > 0)
+            maxLength = strLenAttr.MaximumLength;
+        else if (maxLenAttr?.Length > 0)
+            maxLength = maxLenAttr.Length;
+        else
+            maxLength = GetMaxLength(prop);
+
+        // 📌 Precision/Scale
+        int? precision = null;
+        int? scale = null;
+        var precisionAttr = prop.GetCustomAttribute<PrecisionAttribute>();
+        if (precisionAttr != null)
+        {
+            precision = precisionAttr.Precision;
+            scale = precisionAttr.Scale;
+        }
+
+        // 📌 النوع SQL
+        string typeName = null;
+        var colAttr = prop.GetCustomAttribute<ColumnAttribute>();
+        if (colAttr != null && !string.IsNullOrWhiteSpace(colAttr.TypeName))
+            typeName = colAttr.TypeName;
+        else
+            typeName = prop.PropertyType.MapClrTypeToSql(maxLength, precision, scale);
+
+        // 📌 القيمة الافتراضية
+        string defaultSql = null;
+        var sqlDefAttr = prop.GetCustomAttribute<SqlDefaultValueAttribute>();
+        if (sqlDefAttr != null && !string.IsNullOrWhiteSpace(sqlDefAttr.Expression))
+            defaultSql = sqlDefAttr.Expression;
+        else
+        {
+            var defValAttr = prop.GetCustomAttribute<DefaultValueAttribute>();
+            if (defValAttr != null)
+                defaultSql = defValAttr.Value.ToSqlLiteral(typeName);
+            else
+            {
+                var dv = GetDefaultValue(prop);
+                if (dv != null)
+                    defaultSql = dv.ToSqlLiteral(typeName);
+            }
+        }
+
+        // 📌 ComputedAttribute
+        var computedAttr = prop.GetCustomAttribute<ComputedAttribute>();
+        string computedExpression = null;
+        bool isPersisted = false;
+        if (computedAttr != null)
+        {
+            computedExpression = computedAttr.SqlExpression;
+            isPersisted = computedAttr.IsPersisted;
+        }
+
+        // 🛡️ تجاهل Default لو العمود Computed
+        if (computedAttr != null && !string.IsNullOrWhiteSpace(defaultSql))
+        {
+            Console.WriteLine($"[WARN] {entity.Name}.{columnName} is computed, ignoring default value '{defaultSql}'.");
+            defaultSql = null;
+        }
+
+        // 📌 إنشاء ColumnModel
         var columnModel = new ColumnModel
         {
             Name = columnName,
             PropertyType = prop.PropertyType,
             IsNullable = isNullable,
             MaxLength = maxLength,
-            DefaultValue = defaultValue
+            DefaultValue = defaultSql,
+            TypeName = typeName,
+            ComputedExpression = computedExpression,
+            IsPersisted = isPersisted
         };
 
+        // 📌 تطبيق الـ Handlers
         foreach (var handler in _handlers)
             handler.Apply(prop, columnModel);
 
         if (columnModel.IsIgnored) return;
 
-        var columnDef = ToColumnDefinition(columnModel);
+        // 🆕 منطق التعديل الذكي للأعمدة النصية max
+        if (IsTextType(columnModel.TypeName) && IsMaxLength(columnModel.TypeName))
+        {
+            bool hasLengthAttr =
+                prop.GetCustomAttribute<StringLengthAttribute>() != null ||
+                prop.GetCustomAttribute<MaxLengthAttribute>() != null;
 
-        // 🆕 نحدد خاصية IsNavigationProperty من البداية
+            if (hasLengthAttr || columnModel.MaxLength != null)
+            {
+                int targetLength = columnModel.MaxLength ?? 450;
+                columnModel.TypeName = $"nvarchar({targetLength})";
+
+                // فحص حجم الفهرس
+                bool indexTooLarge = columnModel.Indexes != null && columnModel.Indexes.Any(ix =>
+                    (targetLength * 2) > 900 // nvarchar = 2 bytes per char
+                );
+
+                if (indexTooLarge)
+                {
+                    Console.WriteLine($"[WARN] {entity.Name}.{columnModel.Name} length {targetLength} may exceed index key size limit — index creation skipped, but column length updated in DB.");
+                    columnModel.Indexes?.Clear();
+                }
+                else
+                {
+                    Console.WriteLine($"[AUTO-FIX] Changed {entity.Name}.{columnModel.Name} from nvarchar(max) to nvarchar({targetLength}) based on attribute.");
+                }
+            }
+            else if (columnModel.Indexes != null && columnModel.Indexes.Count > 0)
+            {
+                // Auto-fix بدون Attribute
+                int safeLength = 450;
+                columnModel.TypeName = $"nvarchar({safeLength})";
+                columnModel.MaxLength = safeLength;
+                Console.WriteLine($"[AUTO-FIX] Changed {entity.Name}.{columnModel.Name} from nvarchar(max) to nvarchar({safeLength}) for indexing safety.");
+            }
+        }
+
+        // 📌 تحويل إلى ColumnDefinition
+        var columnDef = ToColumnDefinition(columnModel);
         columnDef.IsNavigationProperty = IsCollectionOfEntity(prop) || IsReferenceToEntity(prop);
 
-        if (prop.HasIdentityAttribute())
+        if (prop.HasIdentityAttribute() || prop.GetCustomAttribute<KeyAttribute>() != null)
             columnDef.IsIdentity = true;
 
         var colDescAttr = prop.GetCustomAttribute<System.ComponentModel.DescriptionAttribute>();
         if (colDescAttr != null && !string.IsNullOrWhiteSpace(colDescAttr.Description))
             columnDef.Description = colDescAttr.Description;
 
-        Console.WriteLine($"[TRACE:ColumnInit] {entity.Name}.{columnDef.Name} → Identity={columnDef.IsIdentity}, Nullable={columnDef.IsNullable}, Type={columnDef.TypeName}");
+        Console.WriteLine(
+            $"[TRACE:ColumnInit] {entity.Name}.{columnDef.Name} → Identity={columnDef.IsIdentity}, Nullable={columnDef.IsNullable}, Type={columnDef.TypeName}, Default={(columnDef.DefaultValue ?? "NULL")}, Computed={(columnDef.ComputedExpression ?? "No")}, Persisted={columnDef.IsPersisted}"
+        );
 
         entity.Columns.Add(columnDef);
 
-        // ✅ الأعمدة المحسوبة (Computed)
+        // 📌 Computed columns
         if (!string.IsNullOrWhiteSpace(columnModel.ComputedExpression))
         {
             var isIndexable = IsIndexableExpression(columnModel.ComputedExpression);
@@ -882,18 +1082,35 @@ public partial class EntityDefinitionBuilder
             {
                 Name = columnName,
                 Expression = columnModel.ComputedExpression,
-                IsIndexable = isIndexable
+                IsIndexable = isIndexable,
+                IsPersisted = columnModel.IsPersisted
             });
 
-            Console.WriteLine($"[TRACE:Computed] {columnName} → Expression={columnModel.ComputedExpression}, Indexable={isIndexable}");
+            Console.WriteLine($"[TRACE:Computed] {columnName} → Expression={columnModel.ComputedExpression}, Persisted={columnModel.IsPersisted}, Indexable={isIndexable}");
         }
 
-        // ✅ قيود CHECK
+        // 📌 Check constraints
         var checks = ToCheckConstraints(prop, entity.Name);
         entity.CheckConstraints.AddRange(checks);
         foreach (var ck in checks)
             Console.WriteLine($"[TRACE:Check] {ck.Name} → {ck.Expression}");
     }
+
+    /// <summary>
+    /// Checks if the SQL type is a text-based type.
+    /// </summary>
+    private bool IsTextType(string typeName) =>
+        typeName.StartsWith("nvarchar", StringComparison.OrdinalIgnoreCase) ||
+        typeName.StartsWith("varchar", StringComparison.OrdinalIgnoreCase) ||
+        typeName.StartsWith("varbinary", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Checks if the SQL type has a max length.
+    /// </summary>
+    private bool IsMaxLength(string typeName) =>
+        typeName.Contains("(max)", StringComparison.OrdinalIgnoreCase);
+
+
     /// <summary>
     /// Converts index definitions from ColumnModel to IndexDefinition.
     /// </summary>
@@ -1084,6 +1301,7 @@ public partial class EntityDefinitionBuilder
     private ISchemaAttributeHandler[] _attributeseHandlers => new ISchemaAttributeHandler[]
     {
             new KeyAttributeHandler(),
+            new SqlDefaultValueHandler(),
             new IndexAttributeHandler(),
             new DefaultValueAttributeHandler(),
             new DescriptionAttributeHandler(),
@@ -1099,21 +1317,23 @@ public partial class EntityDefinitionBuilder
             new ForeignKeyAttributeHandler()
     };
 
-    /// <summary>
-    /// Infers SQL type name from CLR type if not explicitly provided.
-    /// </summary>
-    private static string InferSqlType(Type clrType)
-    {
-        return clrType switch
-        {
-            Type t when t == typeof(string) => "nvarchar(max)",
-            Type t when t == typeof(int) => "int",
-            Type t when t == typeof(bool) => "bit",
-            Type t when t == typeof(DateTime) => "datetime",
-            Type t when t == typeof(decimal) => "decimal(18,2)",
-            Type t when t == typeof(Guid) => "uniqueidentifier",
-            _ => "nvarchar(max)" // fallback
-        };
-    }
+    ///// <summary>
+    ///// Infers SQL type name from CLR type if not explicitly provided.
+    ///// </summary>
+    //private static string InferSqlType(Type clrType)
+    //{
+    //    return clrType switch
+    //    {
+    //        Type t when t == typeof(string) => "nvarchar(max)",
+    //        Type t when t == typeof(int) => "int",
+    //        Type t when t == typeof(bool) => "bit",
+    //        Type t when t == typeof(DateTime) => "datetime",
+    //        Type t when t == typeof(decimal) => "decimal(18,2)",
+    //        Type t when t == typeof(Guid) => "uniqueidentifier",
+    //        _ => "nvarchar(max)" // fallback
+    //    };
+    //}
+
+
 }
 #endregion

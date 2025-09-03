@@ -110,6 +110,7 @@ END;
             var columnLines = new List<string>();
             var constraintLines = new List<string>();
 
+            // 🔹 الأعمدة
             foreach (var col in entity.Columns)
             {
                 var type = col.TypeName;
@@ -120,6 +121,7 @@ END;
                 Console.WriteLine($"  🧩 Column: {col.Name} → {type}, Nullable={col.IsNullable}, Identity={col.IsIdentity}");
             }
 
+            // 🔹 قيود CHECK + الفهارس التلقائية
             foreach (var ck in entity.CheckConstraints)
             {
                 constraintLines.Add($"CONSTRAINT [{ck.Name}] CHECK ({ck.Expression})");
@@ -130,7 +132,20 @@ END;
                 if (!string.IsNullOrWhiteSpace(colName))
                 {
                     bool alreadyIndexed = entity.Indexes.Any(ix => ix.Columns.Contains(colName));
-                    if (!alreadyIndexed && entity.Columns.Any(c => c.Name == colName))
+                    var colDef = entity.Columns.FirstOrDefault(c => c.Name == colName);
+
+                    // ✅ الشرط الجديد: تجاهل الأعمدة من نوع max/text/ntext/image
+                    if (colDef != null &&
+                        (colDef.TypeName.Contains("max", StringComparison.OrdinalIgnoreCase) ||
+                         colDef.TypeName.Contains("text", StringComparison.OrdinalIgnoreCase) ||
+                         colDef.TypeName.Contains("ntext", StringComparison.OrdinalIgnoreCase) ||
+                         colDef.TypeName.Contains("image", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        Console.WriteLine($"    ⚠️ Skipped auto-index for {colName} → type {colDef.TypeName} not indexable");
+                        continue;
+                    }
+
+                    if (!alreadyIndexed && colDef != null)
                     {
                         var ixName = $"IX_{entity.Name}_{colName}_ForCheck";
                         entity.Indexes.Add(new IndexDefinition
@@ -145,6 +160,7 @@ END;
                 }
             }
 
+            // 🔹 المفتاح الأساسي
             if (entity.PrimaryKey?.Columns?.Count > 0)
             {
                 var pkCols = string.Join(", ", entity.PrimaryKey.Columns.Select(c => $"[{c}]"));
@@ -152,6 +168,7 @@ END;
                 Console.WriteLine($"  🔑 PrimaryKey: {entity.PrimaryKey.Name} → {pkCols}");
             }
 
+            // 🔹 إنشاء الجدول
             var allLines = columnLines.Concat(constraintLines).ToList();
             var tableSql = $@"
 CREATE TABLE [{schema}].[{entity.Name}] (
@@ -160,6 +177,7 @@ CREATE TABLE [{schema}].[{entity.Name}] (
 
             sb.AppendLine(tableSql);
 
+            // 🔹 وصف الجدول
             if (!string.IsNullOrWhiteSpace(entity.Description))
             {
                 sb.AppendLine($@"
@@ -170,6 +188,7 @@ EXEC sys.sp_addextendedproperty
     @level1type = N'TABLE',  @level1name = N'{entity.Name}';");
             }
 
+            // 🔹 وصف الأعمدة
             foreach (var col in entity.Columns.Where(c => !string.IsNullOrWhiteSpace(c.Description)))
             {
                 sb.AppendLine($@"
@@ -181,8 +200,7 @@ EXEC sys.sp_addextendedproperty
     @level2type = N'COLUMN', @level2name = N'{col.Name}';");
             }
 
-            // تابع في الجزء الثاني...
-            // ✅ توليد العلاقات (FOREIGN KEY)
+            // 🔹 العلاقات (FK)
             foreach (var fk in entity.ForeignKeys)
             {
                 var fkName = fk.ConstraintName;
@@ -206,8 +224,7 @@ REFERENCES [{schema}].[{fk.ReferencedTable}]([{referencedColumn}]){cascadeClause
 
                 Console.WriteLine($"[TRACE:FK] {fkName} → {fk.Column} → {fk.ReferencedTable}.{referencedColumn} Cascade={fk.OnDelete}");
             }
-
-            // ✅ توليد الفهارس
+            // 🔹 الفهارس
             foreach (var index in entity.Indexes.DistinctBy(i => i.Name))
             {
                 var indexColumns = string.Join(", ", index.Columns.Select(c => $"[{c}]"));
@@ -273,7 +290,7 @@ EXEC sys.sp_addextendedproperty
                 }
             }
 
-            // ✅ توليد CREATE STATISTICS الذكي
+            // 🔹 CREATE STATISTICS الذكي
             foreach (var col in entity.Columns)
             {
                 bool isNumericOrDate = col.TypeName.StartsWith("int", StringComparison.OrdinalIgnoreCase)
@@ -303,7 +320,7 @@ ON [{schema}].[{entity.Name}]([{col.Name}]);");
                 }
             }
 
-            // ✅ توليد فهارس على الأعمدة المحسوبة
+            // 🔹 فهارس الأعمدة المحسوبة
             foreach (var comp in entity.ComputedColumns)
             {
                 var indexName = $"IX_{entity.Name}_{comp.Name}_Computed";
@@ -322,6 +339,8 @@ ON [{schema}].[{entity.Name}]([{comp.Name}]);");
 
             return sb.ToString().Trim();
         }
+
+
 
         // ✅ مساعد لتحديد هل التعبير قابل للفهرسة
         private static bool IsIndexableExpression(string expr)

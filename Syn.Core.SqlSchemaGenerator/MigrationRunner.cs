@@ -8,6 +8,8 @@ using System.Reflection;
 
 namespace Syn.Core.SqlSchemaGenerator;
 
+using Syn.Core.SqlSchemaGenerator.Execution;
+using Syn.Core.SqlSchemaGenerator.Extensions;
 using Syn.Core.SqlSchemaGenerator.Helper;
 
 using System;
@@ -47,6 +49,227 @@ public class MigrationRunner
         _dbReader = dbReader ?? throw new ArgumentNullException(nameof(dbReader));
         _migrationService = new MigrationService(builder, autoMigrate, dbReader);
     }
+
+
+    /// <summary>
+    /// Runs a migration session for all entity types found in the provided assemblies,
+    /// filtered by one or more generic type parameters (interfaces or base classes).
+    /// </summary>
+    /// <typeparam name="T">First filter type (interface or base class).</typeparam>
+    /// <param name="assemblies">Assemblies to scan for entity types.</param>
+    /// <param name="execute">Whether to execute the migration scripts after generation.</param>
+    /// <param name="dryRun">If true, scripts are generated but not executed.</param>
+    /// <param name="interactive">If true, runs in interactive mode (step-by-step execution).</param>
+    /// <param name="previewOnly">If true, shows the generated scripts without executing.</param>
+    /// <param name="autoMerge">If true, attempts to auto-merge changes.</param>
+    /// <param name="showReport">If true, displays a pre-migration report.</param>
+    /// <param name="impactAnalysis">If true, performs an impact analysis before migration.</param>
+    /// <param name="rollbackOnFailure">If true, attempts rollback on failure.</param>
+    /// <param name="autoExecuteRollback">If true, automatically executes rollback scripts.</param>
+    /// <param name="interactiveMode">Interactive mode type ("step" or "batch").</param>
+    /// <param name="rollbackPreviewOnly">If true, shows rollback scripts without executing.</param>
+    /// <param name="logToFile">If true, logs migration details to a file.</param>
+    public void RunMigrationSessionFromAssemblies<T>(
+        IEnumerable<Assembly> assemblies,
+        bool execute = true,
+        bool dryRun = false,
+        bool interactive = false,
+        bool previewOnly = false,
+        bool autoMerge = false,
+        bool showReport = false,
+        bool impactAnalysis = false,
+        bool rollbackOnFailure = true,
+        bool autoExecuteRollback = false,
+        string interactiveMode = "step",
+        bool rollbackPreviewOnly = false,
+        bool logToFile = false)
+    {
+        var entityTypes = assemblies.FilterTypesFromAssemblies(typeof(T));
+
+        RunMigrationSession(
+            entityTypes,
+            execute,
+            dryRun,
+            interactive,
+            previewOnly,
+            autoMerge,
+            showReport,
+            impactAnalysis,
+            rollbackOnFailure,
+            autoExecuteRollback,
+            interactiveMode,
+            rollbackPreviewOnly,
+            logToFile
+        );
+    }
+
+    /// <summary>
+    /// Runs a migration session for all entity types found in the provided assemblies,
+    /// filtered by one or more generic type parameters (interfaces or base classes).
+    /// </summary>
+    /// <typeparam name="T1">First filter type (interface or base class).</typeparam>
+    /// <typeparam name="T2">Second filter type (interface or base class).</typeparam>
+    /// <param name="assemblies">Assemblies to scan for entity types.</param>
+    /// <param name="execute">Whether to execute the migration scripts after generation.</param>
+    /// <param name="dryRun">If true, scripts are generated but not executed.</param>
+    /// <param name="interactive">If true, runs in interactive mode (step-by-step execution).</param>
+    /// <param name="previewOnly">If true, shows the generated scripts without executing.</param>
+    /// <param name="autoMerge">If true, attempts to auto-merge changes.</param>
+    /// <param name="showReport">If true, displays a pre-migration report.</param>
+    /// <param name="impactAnalysis">If true, performs an impact analysis before migration.</param>
+    /// <param name="rollbackOnFailure">If true, attempts rollback on failure.</param>
+    /// <param name="autoExecuteRollback">If true, automatically executes rollback scripts.</param>
+    /// <param name="interactiveMode">Interactive mode type ("step" or "batch").</param>
+    /// <param name="rollbackPreviewOnly">If true, shows rollback scripts without executing.</param>
+    /// <param name="logToFile">If true, logs migration details to a file.</param>
+    public void RunMigrationSessionFromAssemblies<T1, T2>(
+        IEnumerable<Assembly> assemblies,
+        bool execute = true,
+        bool dryRun = false,
+        bool interactive = false,
+        bool previewOnly = false,
+        bool autoMerge = false,
+        bool showReport = false,
+        bool impactAnalysis = false,
+        bool rollbackOnFailure = true,
+        bool autoExecuteRollback = false,
+        string interactiveMode = "step",
+        bool rollbackPreviewOnly = false,
+        bool logToFile = false)
+    {
+        var entityTypes = assemblies.FilterTypesFromAssemblies(
+            typeof(T1),
+            typeof(T2)
+        );
+
+        RunMigrationSession(
+            entityTypes,
+            execute,
+            dryRun,
+            interactive,
+            previewOnly,
+            autoMerge,
+            showReport,
+            impactAnalysis,
+            rollbackOnFailure,
+            autoExecuteRollback,
+            interactiveMode,
+            rollbackPreviewOnly,
+            logToFile
+        );
+    }
+
+
+    /// <summary>
+    /// Runs a migration session for all entity types found in the provided assemblies,
+    /// optionally filtered by one or more interfaces or base classes.
+    /// </summary>
+    /// <param name="assembly">Assembly to scan for entity types.</param>
+    /// <param name="execute">Whether to execute the migration scripts after generation.</param>
+    /// <param name="dryRun">If true, scripts are generated but not executed.</param>
+    /// <param name="interactive">If true, runs in interactive mode (step-by-step execution).</param>
+    /// <param name="previewOnly">If true, shows the generated scripts without executing.</param>
+    /// <param name="autoMerge">If true, attempts to auto-merge changes.</param>
+    /// <param name="showReport">If true, displays a pre-migration report.</param>
+    /// <param name="impactAnalysis">If true, performs an impact analysis before migration.</param>
+    /// <param name="rollbackOnFailure">If true, attempts rollback on failure.</param>
+    /// <param name="autoExecuteRollback">If true, automatically executes rollback scripts.</param>
+    /// <param name="interactiveMode">Interactive mode type ("step" or "batch").</param>
+    /// <param name="rollbackPreviewOnly">If true, shows rollback scripts without executing.</param>
+    /// <param name="logToFile">If true, logs migration details to a file.</param>
+    /// <param name="filterTypes">
+    /// Optional filter types (interfaces or base classes). Only types assignable to at least one of these will be included.
+    /// </param>
+    public void RunMigrationSession(
+    Assembly assembly,
+    bool execute = true,
+    bool dryRun = false,
+    bool interactive = false,
+    bool previewOnly = false,
+    bool autoMerge = false,
+    bool showReport = false,
+    bool impactAnalysis = false,
+    bool rollbackOnFailure = true,
+    bool autoExecuteRollback = false,
+    string interactiveMode = "step",
+    bool rollbackPreviewOnly = false,
+    bool logToFile = false,
+    params Type[] filterTypes)
+    {
+        var entityTypes = assembly.FilterTypesFromAssembly(filterTypes);
+
+        RunMigrationSession(
+            entityTypes,
+            execute,
+            dryRun,
+            interactive,
+            previewOnly,
+            autoMerge,
+            showReport,
+            impactAnalysis,
+            rollbackOnFailure,
+            autoExecuteRollback,
+            interactiveMode,
+            rollbackPreviewOnly,
+            logToFile
+        );
+    }
+
+    /// <summary>
+    /// Runs a migration session for all entity types found in the provided assemblies,
+    /// optionally filtered by one or more interfaces or base classes.
+    /// </summary>
+    /// <param name="assemblies">Assemblies to scan for entity types.</param>
+    /// <param name="execute">Whether to execute the migration scripts after generation.</param>
+    /// <param name="dryRun">If true, scripts are generated but not executed.</param>
+    /// <param name="interactive">If true, runs in interactive mode (step-by-step execution).</param>
+    /// <param name="previewOnly">If true, shows the generated scripts without executing.</param>
+    /// <param name="autoMerge">If true, attempts to auto-merge changes.</param>
+    /// <param name="showReport">If true, displays a pre-migration report.</param>
+    /// <param name="impactAnalysis">If true, performs an impact analysis before migration.</param>
+    /// <param name="rollbackOnFailure">If true, attempts rollback on failure.</param>
+    /// <param name="autoExecuteRollback">If true, automatically executes rollback scripts.</param>
+    /// <param name="interactiveMode">Interactive mode type ("step" or "batch").</param>
+    /// <param name="rollbackPreviewOnly">If true, shows rollback scripts without executing.</param>
+    /// <param name="logToFile">If true, logs migration details to a file.</param>
+    /// <param name="filterTypes">
+    /// Optional filter types (interfaces or base classes). Only types assignable to at least one of these will be included.
+    /// </param>
+    public void RunMigrationSession(
+        IEnumerable<Assembly> assemblies,
+        bool execute = true,
+        bool dryRun = false,
+        bool interactive = false,
+        bool previewOnly = false,
+        bool autoMerge = false,
+        bool showReport = false,
+        bool impactAnalysis = false,
+        bool rollbackOnFailure = true,
+        bool autoExecuteRollback = false,
+        string interactiveMode = "step",
+        bool rollbackPreviewOnly = false,
+        bool logToFile = false,
+        params Type[] filterTypes)
+    {
+        var entityTypes = assemblies.FilterTypesFromAssemblies(filterTypes);
+
+        RunMigrationSession(
+            entityTypes,
+            execute,
+            dryRun,
+            interactive,
+            previewOnly,
+            autoMerge,
+            showReport,
+            impactAnalysis,
+            rollbackOnFailure,
+            autoExecuteRollback,
+            interactiveMode,
+            rollbackPreviewOnly,
+            logToFile
+        );
+    }
+
 
     /// <summary>
     /// Runs a migration session for a list of CLR entity types.

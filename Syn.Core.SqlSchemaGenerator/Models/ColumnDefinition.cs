@@ -89,4 +89,10 @@ public class ColumnDefinition
 
     /// <summary>Optional description of the column, used for documentation or extended properties.</summary>
     public string? Description { get; set; }
+    /// <summary>
+    /// Indicates whether a computed column is persisted in the database.
+    /// Only applies when <see cref="ComputedExpression"/> is not null or empty.
+    /// </summary>
+    public bool IsPersisted { get; set; }
+
 }

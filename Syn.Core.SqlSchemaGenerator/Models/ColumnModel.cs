@@ -45,6 +45,8 @@ public class ColumnModel
     /// Indicates whether the computed column is persisted in the database.
     /// </summary>
     public bool IsPersisted { get; set; }
+    /// <summary>Indicates whether the column is an identity column.</summary>
+    public bool IsIdentity { get; set; }
 
     /// <summary>
     /// The default value assigned to the column, if any.

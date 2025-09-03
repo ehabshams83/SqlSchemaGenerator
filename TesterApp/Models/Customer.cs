@@ -1,4 +1,4 @@
-﻿using Syn.Core.SqlSchemaGenerator.Attributes;
+﻿using Microsoft.EntityFrameworkCore;
 
 using System;
 using System.ComponentModel.DataAnnotations;
@@ -11,17 +11,18 @@ namespace TesterApp.Models;
 /// يمثل عميل في النظام.
 /// </summary>
 [Table("Customers", Schema = "sales")]
+[Index(nameof(Email), nameof(FullName), IsUnique = true)]
 public class Customer
 {
     [Key]
     public int CustomerId { get; set; }
 
     [Required]
-    [StringLength(150)] // ← تعديل فعلي: من 100 إلى 120
+    [StringLength(600)] // ← تعديل فعلي: من 150 إلى 600
     public string FullName { get; set; }
 
     [Required]
-    [StringLength(100)]
+    [StringLength(300)]
     public string Email { get; set; }
 
     [MaxLength(15)]

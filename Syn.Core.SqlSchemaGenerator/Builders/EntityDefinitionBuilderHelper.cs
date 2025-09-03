@@ -124,7 +124,9 @@ public partial class EntityDefinitionBuilder
                 continue;
 
             var (targetSchema, targetTable) = itemType.GetTableInfo();
-            var targetEntity = allEntities.FirstOrDefault(e => e.Name.Equals(targetTable, StringComparison.OrdinalIgnoreCase));
+
+            // ✅ استخدام ResolveEntity بدل FirstOrDefault
+            var targetEntity = ResolveEntity(allEntities, targetTable);
             if (targetEntity == null)
                 continue;
 
@@ -170,9 +172,7 @@ public partial class EntityDefinitionBuilder
                     ? $"{entity.Name}_{targetEntity.Name}"
                     : $"{targetEntity.Name}_{entity.Name}";
 
-                var existingJoinEntity = allEntities.FirstOrDefault(e =>
-                    e.Name.Equals(joinTableName, StringComparison.OrdinalIgnoreCase));
-
+                var existingJoinEntity = ResolveEntity(allEntities, joinTableName);
                 var isExplicit = existingJoinEntity?.ClrType != null;
 
                 entity.Relationships.Add(new RelationshipDefinition
@@ -195,10 +195,10 @@ public partial class EntityDefinitionBuilder
                         Schema = entity.Schema,
                         ClrType = null,
                         Columns = new List<ColumnDefinition>
-            {
-                new ColumnDefinition { Name = $"{entity.Name}Id", TypeName = "int", IsNullable = false },
-                new ColumnDefinition { Name = $"{targetEntity.Name}Id", TypeName = "int", IsNullable = false }
-            },
+                    {
+                        new ColumnDefinition { Name = $"{entity.Name}Id", TypeName = "int", IsNullable = false },
+                        new ColumnDefinition { Name = $"{targetEntity.Name}Id", TypeName = "int", IsNullable = false }
+                    },
                         PrimaryKey = new PrimaryKeyDefinition
                         {
                             Columns = new List<string> { $"{entity.Name}Id", $"{targetEntity.Name}Id" },
@@ -206,42 +206,41 @@ public partial class EntityDefinitionBuilder
                             Name = $"PK_{joinTableName}"
                         },
                         ForeignKeys = new List<ForeignKeyDefinition>
-            {
-                new ForeignKeyDefinition
-                {
-                    Column = $"{entity.Name}Id",
-                    ReferencedTable = entity.Name,
-                    ConstraintName = $"FK_{joinTableName}_{entity.Name}Id"
-                },
-                new ForeignKeyDefinition
-                {
-                    Column = $"{targetEntity.Name}Id",
-                    ReferencedTable = targetEntity.Name,
-                    ConstraintName = $"FK_{joinTableName}_{targetEntity.Name}Id"
-                }
-            },
+                    {
+                        new ForeignKeyDefinition
+                        {
+                            Column = $"{entity.Name}Id",
+                            ReferencedTable = entity.Name,
+                            ConstraintName = $"FK_{joinTableName}_{entity.Name}Id"
+                        },
+                        new ForeignKeyDefinition
+                        {
+                            Column = $"{targetEntity.Name}Id",
+                            ReferencedTable = targetEntity.Name,
+                            ConstraintName = $"FK_{joinTableName}_{targetEntity.Name}Id"
+                        }
+                    },
                         CheckConstraints = new List<CheckConstraintDefinition>
-            {
-                new CheckConstraintDefinition
-                {
-                    Name = $"CK_{joinTableName}_{entity.Name}Id_NotNull",
-                    Expression = $"[{entity.Name}Id] IS NOT NULL",
-                    Description = $"{entity.Name}Id must not be NULL"
-                },
-                new CheckConstraintDefinition
-                {
-                    Name = $"CK_{joinTableName}_{targetEntity.Name}Id_NotNull",
-                    Expression = $"[{targetEntity.Name}Id] IS NOT NULL",
-                    Description = $"{targetEntity.Name}Id must not be NULL"
-                }
-            }
+                    {
+                        new CheckConstraintDefinition
+                        {
+                            Name = $"CK_{joinTableName}_{entity.Name}Id_NotNull",
+                            Expression = $"[{entity.Name}Id] IS NOT NULL",
+                            Description = $"{entity.Name}Id must not be NULL"
+                        },
+                        new CheckConstraintDefinition
+                        {
+                            Name = $"CK_{joinTableName}_{targetEntity.Name}Id_NotNull",
+                            Expression = $"[{targetEntity.Name}Id] IS NOT NULL",
+                            Description = $"{targetEntity.Name}Id must not be NULL"
+                        }
+                    }
                     };
 
-                    if (!isExplicit && !allEntities.Any(e => e.Name.Equals(joinTableName, StringComparison.OrdinalIgnoreCase)))
+                    if (!allEntities.Any(e => e.Name.Equals(joinTableName, StringComparison.OrdinalIgnoreCase)))
                     {
                         allEntities.Add(joinEntity);
                     }
-
                 }
                 else
                 {
@@ -250,6 +249,8 @@ public partial class EntityDefinitionBuilder
             }
         }
     }
+
+    
     /// <summary>
     /// Infers one-to-one relationships between entities based on navigation properties.
     /// Detects matching foreign keys and primary key alignment to confirm uniqueness.
@@ -261,6 +262,7 @@ public partial class EntityDefinitionBuilder
     public void InferOneToOneRelationships(Type clrType, EntityDefinition entity, List<EntityDefinition> allEntities)
     {
         Console.WriteLine($"[TRACE:OneToOne] Analyzing entity {entity.Name}");
+
         if (entity.ForeignKeys == null || entity.ForeignKeys.Count == 0)
         {
             Console.WriteLine("  No foreign keys found.");
@@ -271,13 +273,11 @@ public partial class EntityDefinitionBuilder
         {
             Console.WriteLine($"  FK found: {fk.Column} -> {fk.ReferencedTable}");
 
-            var targetEntity = allEntities.FirstOrDefault(e =>
-                e.Name.Equals(fk.ReferencedTable, StringComparison.OrdinalIgnoreCase));
+            // البحث عن الكيان الهدف بالاسم فقط (Case-insensitive)
+            var targetEntity = ResolveEntity(allEntities, fk.ReferencedTable);
+
             if (targetEntity == null)
-            {
-                Console.WriteLine("    Target entity not found in allEntities.");
                 continue;
-            }
 
             bool alreadyHasNonOneToOne =
                 entity.Relationships.Any(r => r.TargetEntity == targetEntity.Name && r.Type != RelationshipType.OneToOne) ||
@@ -827,6 +827,27 @@ REFERENCES [{fk.ReferencedTable}]([{fk.ReferencedColumn}])
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// يحاول إيجاد الكيان الهدف في قائمة الكيانات باستخدام اسم الجدول فقط.
+    /// </summary>
+    private EntityDefinition? ResolveEntity(IEnumerable<EntityDefinition> allEntities, string referencedTable)
+    {
+        if (string.IsNullOrWhiteSpace(referencedTable))
+            return null;
+
+        var target = allEntities.FirstOrDefault(e =>
+            string.Equals(e.Name, referencedTable, StringComparison.OrdinalIgnoreCase));
+
+        if (target == null)
+        {
+            Console.WriteLine($"    Target entity not found in allEntities for table: {referencedTable}");
+            Console.WriteLine("[REL] Available entities: " +
+                string.Join(", ", allEntities.Select(e => $"[{e.Schema}].[{e.Name}]")));
+        }
+
+        return target;
     }
 
 

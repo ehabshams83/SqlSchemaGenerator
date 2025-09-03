@@ -1,4 +1,5 @@
-﻿using Syn.Core.SqlSchemaGenerator.Helper;
+﻿using Syn.Core.SqlSchemaGenerator.Execution;
+using Syn.Core.SqlSchemaGenerator.Helper;
 using Syn.Core.SqlSchemaGenerator.Models;
 
 namespace Syn.Core.SqlSchemaGenerator.Builders;
@@ -22,7 +23,7 @@ public class MigrationService
     public MigrationService(EntityDefinitionBuilder entityDefinitionBuilder, AutoMigrate autoMigrate, DatabaseSchemaReader dbReader)
     {
         _entityDefinitionBuilder = entityDefinitionBuilder ?? throw new ArgumentNullException(nameof(entityDefinitionBuilder));
-        _alterTableBuilder = new SqlAlterTableBuilder(entityDefinitionBuilder);
+        _alterTableBuilder = new SqlAlterTableBuilder(entityDefinitionBuilder, autoMigrate._connectionString);
         _autoMigrate = autoMigrate ?? throw new ArgumentNullException(nameof(autoMigrate));
         _dbReader = dbReader ?? throw new ArgumentNullException(nameof(dbReader));
     }
@@ -180,6 +181,9 @@ public class MigrationService
     /// <returns>Formatted report string describing schema differences.</returns>
     public string CompareOnly(EntityDefinition oldEntity, EntityDefinition newEntity, string format = "text")
     {
+        // قبل أي Run جديد أو قبل توليد التقرير
+        HelperMethod._suppressedWarnings.Clear();
+
         var script = _alterTableBuilder.Build(oldEntity, newEntity);
         var commands = SplitSqlCommands(script);
 
@@ -193,6 +197,7 @@ public class MigrationService
             return GenerateJsonReport(oldEntity, newEntity, commands);
 
         return GenerateTextReport(oldEntity, newEntity, commands);
+        ;
     }
 
     /// <summary>
@@ -214,6 +219,9 @@ public class MigrationService
         IEnumerable<(EntityDefinition oldEntity, EntityDefinition newEntity)> entityPairs,
         string format = "text")
     {
+        // قبل أي Run جديد أو قبل توليد التقرير
+        HelperMethod._suppressedWarnings.Clear();
+
         var allReports = new List<string>();
         var allChanges = new List<object>();
 
@@ -314,6 +322,9 @@ public class MigrationService
         int alteredTables = 0;
         int unchangedTables = 0;
 
+        // قبل أي Run جديد أو قبل توليد التقرير
+        HelperMethod._suppressedWarnings.Clear();
+
         Console.WriteLine("=== Batch Migration Started ===");
 
         foreach (var (oldEntity, newEntity) in entityPairs)
@@ -382,8 +393,17 @@ public class MigrationService
             report += $" - {firstLine}\n";
         }
 
+        if (HelperMethod._suppressedWarnings.Count > 0)
+        {
+            report += "\n⚠️ Suppressed Warnings (already reported in previous run):\n";
+            foreach (var warn in HelperMethod._suppressedWarnings.Distinct().OrderBy(w => w))
+                report += $"   {warn}\n";
+        }
+
         return report;
     }
+
+
     /// <summary>
     /// Generates a Markdown-formatted comparison report between two entities.
     /// 
@@ -409,8 +429,17 @@ public class MigrationService
             md += $"- `{firstLine}`\n";
         }
 
+        if (HelperMethod._suppressedWarnings.Count > 0)
+        {
+            md += "\n### ⚠️ Suppressed Warnings (already reported in previous run)\n";
+            foreach (var warn in HelperMethod._suppressedWarnings.Distinct().OrderBy(w => w))
+                md += $"- `{warn}`\n";
+        }
+
         return md;
     }
+
+
 
     /// <summary>
     /// Generates a JSON-formatted comparison report between two entities.
@@ -438,7 +467,8 @@ public class MigrationService
             {
                 Summary = c.Split('\n')[0].Trim(),
                 FullCommand = c
-            }).ToList()
+            }).ToList(),
+            SuppressedWarnings = HelperMethod._suppressedWarnings.Distinct().OrderBy(w => w).ToList()
         };
 
         return System.Text.Json.JsonSerializer.Serialize(json, new System.Text.Json.JsonSerializerOptions
@@ -446,6 +476,7 @@ public class MigrationService
             WriteIndented = true
         });
     }
+
 
     /// <summary>
     /// Splits a SQL migration script into individual commands.

@@ -1,5 +1,4 @@
-﻿using Syn.Core.SqlSchemaGenerator.Migrations.AlterTable;
-
+﻿
 using System.Collections.Generic;
 
 namespace Syn.Core.SqlSchemaGenerator.Models
