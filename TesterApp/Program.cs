@@ -24,7 +24,7 @@ class Program
 };
 
         // تشغيل المايجريشن مع الـ Preview + Impact Analysis
-        runner.RunMigrationSession(
+        runner.Initiate(
             entityTypes,
             execute: true,          // هنشغّل التنفيذ بعد الموافقة
             dryRun: false,          // مش عرض بس، هننفذ لو وافقنا

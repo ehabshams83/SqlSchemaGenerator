@@ -339,7 +339,7 @@ public class MigrationRunner
     /// <param name="interactiveMode">Interactive mode type ("step" or "batch").</param>
     /// <param name="rollbackPreviewOnly">If true, shows rollback scripts without executing.</param>
     /// <param name="logToFile">If true, logs migration details to a file.</param>
-    public void RunMigrationSession<T>(
+    public void Initiate<T>(
         IEnumerable<Assembly> assemblies,
         bool execute = true,
         bool dryRun = false,
@@ -356,7 +356,7 @@ public class MigrationRunner
     {
         var entityTypes = assemblies.FilterTypesFromAssemblies(typeof(T));
 
-        RunMigrationSession(
+        Initiate(
             entityTypes,
             execute,
             dryRun,
@@ -392,7 +392,7 @@ public class MigrationRunner
     /// <param name="interactiveMode">Interactive mode type ("step" or "batch").</param>
     /// <param name="rollbackPreviewOnly">If true, shows rollback scripts without executing.</param>
     /// <param name="logToFile">If true, logs migration details to a file.</param>
-    public void RunMigrationSession<T1, T2>(
+    public void Initiate<T1, T2>(
         IEnumerable<Assembly> assemblies,
         bool execute = true,
         bool dryRun = false,
@@ -412,7 +412,7 @@ public class MigrationRunner
             typeof(T2)
         );
 
-        RunMigrationSession(
+        Initiate(
             entityTypes,
             execute,
             dryRun,
@@ -450,7 +450,7 @@ public class MigrationRunner
     /// <param name="filterTypes">
     /// Optional filter types (interfaces or base classes). Only types assignable to at least one of these will be included.
     /// </param>
-    public void RunMigrationSession(
+    public void Initiate(
     Assembly assembly,
     bool execute = true,
     bool dryRun = false,
@@ -468,7 +468,7 @@ public class MigrationRunner
     {
         var entityTypes = assembly.FilterTypesFromAssembly(filterTypes);
 
-        RunMigrationSession(
+        Initiate(
             entityTypes,
             execute,
             dryRun,
@@ -505,7 +505,7 @@ public class MigrationRunner
     /// <param name="filterTypes">
     /// Optional filter types (interfaces or base classes). Only types assignable to at least one of these will be included.
     /// </param>
-    public void RunMigrationSession(
+    public void Initiate(
         IEnumerable<Assembly> assemblies,
         bool execute = true,
         bool dryRun = false,
@@ -523,7 +523,7 @@ public class MigrationRunner
     {
         var entityTypes = assemblies.FilterTypesFromAssemblies(filterTypes);
 
-        RunMigrationSession(
+        Initiate(
             entityTypes,
             execute,
             dryRun,
@@ -546,7 +546,7 @@ public class MigrationRunner
     /// Compares each entity with its database version, generates migration script,
     /// analyzes impact and safety, shows detailed reports, and optionally executes interactively.
     /// </summary>
-    public void RunMigrationSession(
+    public void Initiate(
     IEnumerable<Type> entityTypes,
     bool execute = true,
     bool dryRun = false,
