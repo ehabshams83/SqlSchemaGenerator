@@ -14,6 +14,8 @@ public class ColumnDefinition
     /// <summary>The SQL type name of the column (e.g., "nvarchar", "decimal").</summary>
     public string TypeName { get; set; }
 
+    public Type PropertyType { get; set; }
+
     /// <summary>Optional precision for numeric types (e.g., decimal).</summary>
     public int? Precision { get; set; }
 

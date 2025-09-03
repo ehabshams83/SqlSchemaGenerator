@@ -29,6 +29,9 @@ namespace Syn.Core.SqlSchemaGenerator.Models
         /// <summary>
         /// Sets referencing column to default value on delete or update.
         /// </summary>
-        SetDefault
+        SetDefault,
+
+
+        Restrict
     }
 }

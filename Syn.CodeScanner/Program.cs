@@ -16,7 +16,7 @@ namespace Syn.CodeScanner
             // 1. مسار الـ solution أو csproj
             var solutionPath = args.Length > 0
                 ? args[0]
-                : Path.Combine(Directory.GetCurrentDirectory(), "../SqlSchemaGenerator.sln");
+                : Path.Combine(Directory.GetCurrentDirectory(), "C:\\Users\\Ehab Shams\\source\\repos\\SqlSchemaGenerator\\SqlSchemaGenerator.sln");
 
             Console.WriteLine($"[Info] Loading solution: {solutionPath}");
 
